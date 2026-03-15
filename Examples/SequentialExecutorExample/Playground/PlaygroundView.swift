@@ -43,7 +43,7 @@ struct PlaygroundView: View {
 
                 Section("Policy") {
                     Picker(
-                        "runLoop",
+                        "RunLoop",
                         selection: Binding(
                             get: { vm.runLoopSelection },
                             set: { newValue in
@@ -53,10 +53,9 @@ struct PlaygroundView: View {
                         )
                     ) {
                         ForEach(ViewModel.RunLoopSelection.allCases) { option in
-                            Text("." + option.rawValue).tag(option)
+                            Text(option.rawValue).tag(option)
                         }
-                    }
-                    .pickerStyle(.segmented)
+                    }.pickerStyle(.segmented)
 
                     Slider(
                         value: Binding(
@@ -82,8 +81,7 @@ struct PlaygroundView: View {
                         label: {
                             Text("Duration")
                         }
-                    )
-                    .disabled(vm.runLoopSelection == .disabled)
+                    ).disabled(vm.runLoopSelection == .disabled)
                 }
 
                 Section(
@@ -152,7 +150,7 @@ struct PlaygroundView: View {
                         LabeledContent(
                             content: {
                                 HStack(spacing: 8) {
-                                    Button("executeNow", action: vm.executeNow)
+                                    Button("Execute Now", action: vm.executeNow)
                                     Button("Fail Now", action: vm.failNow)
                                         .disabled(!vm.isExecuting)
                                 }

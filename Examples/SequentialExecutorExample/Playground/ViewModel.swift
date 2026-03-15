@@ -153,7 +153,7 @@ final class ViewModel {
     // MARK: - Snapshots
 
     func waitSnapshot(at date: Date) -> CountdownSnapshot {
-        let configuredTotal = runLoopSelection == .interval ? runLoopIntervalSeconds : 0
+        let configuredTotal = runLoopIntervalSeconds
         let activeTotal = waitCountdown.totalSeconds
         let totalSeconds = activeTotal > 0 ? activeTotal : configuredTotal
         return .init(
