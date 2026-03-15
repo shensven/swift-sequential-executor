@@ -160,7 +160,7 @@ public extension SequentialExecutor {
 // MARK: Policy Coordination
 
 private extension SequentialExecutor {
-    private func reconcile(with policy: Policy) {
+    func reconcile(with policy: Policy) {
         let previousPolicy = loopPolicy
         let shouldRestartScheduledExecutionLoop = loopTask != nil
             && previousPolicy.interval != nil
@@ -176,7 +176,7 @@ private extension SequentialExecutor {
         reconcileLoopTask()
     }
 
-    private func stopScheduledExecutionLoop(reason: LoopStopReason) {
+    func stopScheduledExecutionLoop(reason: LoopStopReason) {
         guard loopTask != nil, let loopID = loopTaskID else { return }
         emit(.loopStopped(loopID: loopID, reason: reason))
         loopTask?.cancel()
@@ -184,7 +184,7 @@ private extension SequentialExecutor {
         loopTaskID = nil
     }
 
-    private func reconcileLoopTask() {
+    func reconcileLoopTask() {
         guard loopPolicy.interval != nil else {
             stopScheduledExecutionLoop(reason: .policyDisabled)
             return
@@ -214,7 +214,7 @@ private extension SequentialExecutor {
         }
     }
 
-    private func waitForNextScheduledExecution(loopID: UUID) async -> Bool {
+    func waitForNextScheduledExecution(loopID: UUID) async -> Bool {
         guard let interval = loopPolicy.interval else { return false }
         do {
             emit(.waitStarted(loopID: loopID, interval: interval))
@@ -231,12 +231,12 @@ private extension SequentialExecutor {
         return true
     }
 
-    private func loopDidExit(loopID: UUID) {
+    func loopDidExit(loopID: UUID) {
         emit(.loopExited(loopID: loopID))
         clearLoopTaskIfCurrent(loopID)
     }
 
-    private func clearLoopTaskIfCurrent(_ taskId: UUID) {
+    func clearLoopTaskIfCurrent(_ taskId: UUID) {
         guard loopTaskID == taskId else { return }
         loopTask = nil
         loopTaskID = nil
@@ -247,13 +247,13 @@ private extension SequentialExecutor {
 // MARK: Immediate Execution
 
 private extension SequentialExecutor {
-    private enum ExecutionOutcome: Sendable {
+    enum ExecutionOutcome: Sendable {
         case finished
         case cancelled
         case failed(any Error)
     }
 
-    private func executeImmediately() async {
+    func executeImmediately() async {
         latestImmediateExecutionRequestID &+= 1
         let requestID = latestImmediateExecutionRequestID
         emit(.requested(requestID: requestID))
@@ -263,7 +263,6 @@ private extension SequentialExecutor {
         // and replace it with a new immediate execution.
         stopScheduledExecutionLoop(reason: .executeNowRequested)
         await cancelCurrentExecutionAndWait()
-        stopScheduledExecutionLoop(reason: .executeNowRequested)
 
         // After resuming from the suspension point, a newer executeNow() request
         // may have already been queued. Only the latest request should proceed;
@@ -281,13 +280,13 @@ private extension SequentialExecutor {
         reconcileLoopTask()
     }
 
-    private func cancelCurrentExecutionAndWait() async {
+    func cancelCurrentExecutionAndWait() async {
         guard let executionTask else { return }
         executionTask.cancel()
         await executionTask.value
     }
 
-    private func startExecution(source: ExecutionSource) -> Task<Void, Never> {
+    func startExecution(source: ExecutionSource) -> Task<Void, Never> {
         let execute = self.execute
         let executionID = UUID.sequentialExecutorV7()
         let task = Task { [weak self, execute] in
@@ -312,7 +311,7 @@ private extension SequentialExecutor {
         return task
     }
 
-    private func finishExecution(executionID: UUID, source: ExecutionSource, outcome: ExecutionOutcome) {
+    func finishExecution(executionID: UUID, source: ExecutionSource, outcome: ExecutionOutcome) {
         switch outcome {
         case .finished: emit(.executionFinished(executionID: executionID, source: source))
         case .cancelled: emit(.executionCancelled(executionID: executionID, source: source))
