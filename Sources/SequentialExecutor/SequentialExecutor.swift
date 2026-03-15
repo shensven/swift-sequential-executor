@@ -239,6 +239,7 @@ private extension SequentialExecutor {
         guard loopTaskID == taskId else { return }
         loopTask = nil
         loopTaskID = nil
+        reconcileLoopTask()
     }
 }
 
