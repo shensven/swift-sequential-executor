@@ -21,7 +21,7 @@ public actor SequentialExecutor {
     /// - execution lifecycle
     /// - loop lifecycle
     /// - loop waiting
-    public enum Event: @unchecked Sendable {
+    public enum Event: Sendable {
         /// Reports that a caller requested an immediate execution.
         case requested(requestID: UInt)
         /// Reports that a single execution started.
@@ -31,7 +31,7 @@ public actor SequentialExecutor {
         /// Reports that a single execution was cancelled.
         case executionCancelled(executionID: UUID, source: ExecutionSource)
         /// Reports that a single execution failed with an error.
-        case executionFailed(executionID: UUID, source: ExecutionSource, error: any Error)
+        case executionFailed(executionID: UUID, source: ExecutionSource, error: any Error & Sendable)
 
         /// Reports that a new scheduled loop started.
         case loopStarted(loopID: UUID)
@@ -45,7 +45,7 @@ public actor SequentialExecutor {
         /// Reports that the current loop wait was cancelled.
         case waitCancelled(loopID: UUID)
         /// Reports that the current loop wait failed with an error.
-        case waitFailed(loopID: UUID, error: any Error)
+        case waitFailed(loopID: UUID, error: any Error & Sendable)
         /// Reports that the configured interval elapsed.
         case intervalElapsed(loopID: UUID)
         /// Reports that the loop was enabled but no interval was available.
