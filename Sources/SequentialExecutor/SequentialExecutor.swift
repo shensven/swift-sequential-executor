@@ -19,6 +19,7 @@ public actor SequentialExecutor {
     /// The events are grouped into:
     /// - immediate requests
     /// - execution lifecycle
+    /// - policy changes
     /// - loop lifecycle
     /// - loop waiting
     public enum Event: Sendable {
@@ -32,6 +33,9 @@ public actor SequentialExecutor {
         case executionCancelled(executionID: UUID, source: ExecutionSource)
         /// Reports that a single execution failed with an error.
         case executionFailed(executionID: UUID, source: ExecutionSource, error: any Error & Sendable)
+
+        /// Reports that the loop policy changed.
+        case policyUpdated(previous: Policy, new: Policy)
 
         /// Reports that a new scheduled loop started.
         case loopStarted(loopID: UUID)
@@ -146,11 +150,15 @@ public extension SequentialExecutor {
 
 private extension SequentialExecutor {
     private func reconcile(with policy: Policy) {
+        let previousPolicy = loopPolicy
         let shouldRestartScheduledExecutionLoop = loopTask != nil
-            && loopPolicy.shouldRunLoop
+            && previousPolicy.shouldRunLoop
             && policy.shouldRunLoop
-            && loopPolicy.interval != policy.interval
+            && previousPolicy.interval != policy.interval
         loopPolicy = policy
+        if previousPolicy != policy {
+            emit(.policyUpdated(previous: previousPolicy, new: policy))
+        }
         if shouldRestartScheduledExecutionLoop {
             stopScheduledExecutionLoop(reason: .policyUpdated)
         }
@@ -167,6 +175,13 @@ private extension SequentialExecutor {
 
     private func reconcileLoopTask() {
         guard loopPolicy.shouldRunLoop else {
+            stopScheduledExecutionLoop(reason: .policyDisabled)
+            return
+        }
+
+        guard loopPolicy.interval != nil else {
+            let loopID = loopTaskID ?? UUID.sequentialExecutorV7()
+            emit(.missingInterval(loopID: loopID))
             stopScheduledExecutionLoop(reason: .policyDisabled)
             return
         }
