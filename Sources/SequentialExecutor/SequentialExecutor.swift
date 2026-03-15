@@ -191,8 +191,7 @@ private extension SequentialExecutor {
                 await executionTask.value
                 guard !Task.isCancelled else { break }
             }
-            await self?.emit(.loopExited(loopID: taskId))
-            await self?.clearLoopTaskIfCurrent(taskId)
+            await self?.loopDidExit(loopID: taskId)
         }
     }
 
@@ -214,6 +213,11 @@ private extension SequentialExecutor {
         }
         emit(.intervalElapsed(loopID: loopID))
         return true
+    }
+
+    private func loopDidExit(loopID: UUID) {
+        emit(.loopExited(loopID: loopID))
+        clearLoopTaskIfCurrent(loopID)
     }
 
     private func clearLoopTaskIfCurrent(_ taskId: UUID) {
