@@ -265,6 +265,14 @@ private extension SequentialExecutor {
         await cancelCurrentExecutionAndWait()
         stopScheduledExecutionLoop(reason: .executeNowRequested)
 
+        // After resuming from the suspension point, a newer executeNow() request
+        // may have already been queued. Only the latest request should proceed;
+        // older requests yield to avoid parallel executions.
+        guard latestImmediateExecutionRequestID == requestID else {
+            pendingImmediateExecutionCount -= 1
+            return
+        }
+
         let task = startExecution(source: .executeNow(requestID: requestID))
         await task.value
 
