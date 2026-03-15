@@ -74,24 +74,33 @@ public actor SequentialExecutor {
 
     /// Controls whether the scheduled loop should run and how long it waits.
     public struct Policy: Sendable, Equatable {
-        public private(set) var runLoopWithInterval: Duration?
+        /// Describes whether the loop is disabled or running with an interval.
+        public enum RunLoop: Sendable, Equatable {
+            case disabled
+            case interval(Duration)
+        }
+
+        public private(set) var runLoop: RunLoop = .disabled
 
         /// Creates a loop policy.
         ///
-        /// - Parameter runLoopWithInterval: How long the loop waits before each
-        ///   scheduled execution. Pass `nil` or `.zero` to disable the loop.
-        public init(runLoopWithInterval: Duration? = nil) {
-            if let runLoopWithInterval {
-                precondition(runLoopWithInterval >= .zero,
-                             "SequentialExecutor.Policy.runLoopWithInterval must be greater than or equal to zero.")
-                if runLoopWithInterval == .zero {
-                    self.runLoopWithInterval = nil
-                } else {
-                    self.runLoopWithInterval = runLoopWithInterval
-                }
-            } else {
-                self.runLoopWithInterval = nil
+        /// - Parameter runLoop: The desired loop mode.
+        public init(runLoop: RunLoop = .disabled) {
+            switch runLoop {
+            case .disabled:
+                self.runLoop = .disabled
+            case let .interval(interval):
+                precondition(interval > .zero,
+                             "SequentialExecutor.Policy.runLoop interval must be greater than zero.")
+                self.runLoop = .interval(interval)
             }
+        }
+
+        fileprivate var interval: Duration? {
+            if case let .interval(interval) = runLoop {
+                return interval
+            }
+            return nil
         }
     }
 
@@ -154,9 +163,9 @@ private extension SequentialExecutor {
     private func reconcile(with policy: Policy) {
         let previousPolicy = loopPolicy
         let shouldRestartScheduledExecutionLoop = loopTask != nil
-            && previousPolicy.runLoopWithInterval != nil
-            && policy.runLoopWithInterval != nil
-            && previousPolicy.runLoopWithInterval != policy.runLoopWithInterval
+            && previousPolicy.interval != nil
+            && policy.interval != nil
+            && previousPolicy.interval != policy.interval
         loopPolicy = policy
         if previousPolicy != policy {
             emit(.policyUpdated(previous: previousPolicy, new: policy))
@@ -176,7 +185,7 @@ private extension SequentialExecutor {
     }
 
     private func reconcileLoopTask() {
-        guard loopPolicy.runLoopWithInterval != nil else {
+        guard loopPolicy.interval != nil else {
             stopScheduledExecutionLoop(reason: .policyDisabled)
             return
         }
@@ -206,7 +215,7 @@ private extension SequentialExecutor {
     }
 
     private func waitForNextScheduledExecution(loopID: UUID) async -> Bool {
-        guard let interval = loopPolicy.runLoopWithInterval else { return false }
+        guard let interval = loopPolicy.interval else { return false }
         do {
             emit(.waitStarted(loopID: loopID, interval: interval))
             try await Task.sleep(for: interval)
