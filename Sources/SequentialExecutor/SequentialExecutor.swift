@@ -153,6 +153,10 @@ public actor SequentialExecutor {
     ///     The executor passes the current execution context, including the
     ///     execution identifier and the trigger source.
     ///   - eventHandler: An optional observer for lifecycle events.
+    ///     The executor invokes this callback synchronously on its coordination path
+    ///     in the same order the events are emitted. Keep the handler lightweight and
+    ///     non-blocking. If the observer needs heavier work, hand the event off to
+    ///     another queue or task from inside the callback.
     public init(
         execute: @escaping @Sendable (ExecutionContext) async throws -> Void,
         eventHandler: ((Event) -> Void)? = nil
@@ -166,6 +170,10 @@ public actor SequentialExecutor {
     /// - Parameters:
     ///   - execute: The single unit of work to run each time the executor fires.
     ///   - eventHandler: An optional observer for lifecycle events.
+    ///     The executor invokes this callback synchronously on its coordination path
+    ///     in the same order the events are emitted. Keep the handler lightweight and
+    ///     non-blocking. If the observer needs heavier work, hand the event off to
+    ///     another queue or task from inside the callback.
     public init(execute: @escaping @Sendable () async throws -> Void, eventHandler: ((Event) -> Void)? = nil) {
         self.init(
             execute: { _ in
