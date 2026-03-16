@@ -22,36 +22,48 @@ public actor SequentialExecutor {
     /// - policy changes
     /// - loop lifecycle
     /// - loop waiting
-    public enum Event: Sendable {
-        /// Reports that a caller requested an immediate execution.
-        case requested(requestID: UInt)
-        /// Reports that a single execution started.
-        case executionStarted(executionID: UUID, source: ExecutionSource)
-        /// Reports that a single execution finished successfully.
-        case executionFinished(executionID: UUID, source: ExecutionSource)
-        /// Reports that a single execution was cancelled.
-        case executionCancelled(executionID: UUID, source: ExecutionSource)
-        /// Reports that a single execution failed with an error.
-        case executionFailed(executionID: UUID, source: ExecutionSource, error: any Error & Sendable)
+    public struct Event: Sendable {
+        public enum Kind: Sendable {
+            /// Reports that a caller requested an immediate execution.
+            case requested(requestID: UInt)
+            /// Reports that a single execution started.
+            case executionStarted(executionID: UUID, source: ExecutionSource)
+            /// Reports that a single execution finished successfully.
+            case executionFinished(executionID: UUID, source: ExecutionSource)
+            /// Reports that a single execution was cancelled.
+            case executionCancelled(executionID: UUID, source: ExecutionSource)
+            /// Reports that a single execution failed with an error.
+            case executionFailed(executionID: UUID, source: ExecutionSource, error: any Error & Sendable)
 
-        /// Reports that the loop policy changed.
-        case policyUpdated(previous: Policy, new: Policy)
+            /// Reports that the loop policy changed.
+            case policyUpdated(previous: Policy, new: Policy)
 
-        /// Reports that a new scheduled loop started.
-        case loopStarted(loopID: UUID)
-        /// Reports that the current scheduled loop was asked to stop.
-        case loopStopped(loopID: UUID, reason: LoopStopReason)
-        /// Reports that the scheduled loop fully exited.
-        case loopExited(loopID: UUID)
+            /// Reports that a new scheduled loop started.
+            case loopStarted(loopID: UUID)
+            /// Reports that the current scheduled loop was asked to stop.
+            case loopStopped(loopID: UUID, reason: LoopStopReason)
+            /// Reports that the scheduled loop fully exited.
+            case loopExited(loopID: UUID)
 
-        /// Reports that the loop started waiting for the next interval.
-        case waitStarted(loopID: UUID, interval: Duration)
-        /// Reports that the current loop wait was cancelled.
-        case waitCancelled(loopID: UUID)
-        /// Reports that the current loop wait failed with an error.
-        case waitFailed(loopID: UUID, error: any Error & Sendable)
-        /// Reports that the configured interval elapsed.
-        case intervalElapsed(loopID: UUID)
+            /// Reports that the loop started waiting for the next interval.
+            case waitStarted(loopID: UUID, interval: Duration)
+            /// Reports that the current loop wait was cancelled.
+            case waitCancelled(loopID: UUID)
+            /// Reports that the current loop wait failed with an error.
+            case waitFailed(loopID: UUID, error: any Error & Sendable)
+            /// Reports that the configured interval elapsed.
+            case intervalElapsed(loopID: UUID)
+        }
+
+        /// The time when the executor emitted this event.
+        public let emittedAt: Date
+        /// The lifecycle payload emitted at `emittedAt`.
+        public let kind: Kind
+
+        public init(emittedAt: Date = .now, kind: Kind) {
+            self.emittedAt = emittedAt
+            self.kind = kind
+        }
     }
 
     /// Describes what triggered an execution.
@@ -363,8 +375,8 @@ private extension SequentialExecutor {
 // MARK: Events
 
 private extension SequentialExecutor {
-    func emit(_ event: Event) {
-        eventHandler?(event)
+    func emit(_ kind: Event.Kind, emittedAt: Date = .now) {
+        eventHandler?(Event(emittedAt: emittedAt, kind: kind))
     }
 }
 

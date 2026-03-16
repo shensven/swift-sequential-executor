@@ -209,82 +209,82 @@ private struct StubError: Error, Sendable {}
 
 private extension SequentialExecutor.Event {
     var isRequested: Bool {
-        if case .requested = self { return true }
+        if case .requested = kind { return true }
         return false
     }
 
     var isLoopStarted: Bool {
-        if case .loopStarted = self { return true }
+        if case .loopStarted = kind { return true }
         return false
     }
 
     var isLoopExited: Bool {
-        if case .loopExited = self { return true }
+        if case .loopExited = kind { return true }
         return false
     }
 
     var isWaitCancelled: Bool {
-        if case .waitCancelled = self { return true }
+        if case .waitCancelled = kind { return true }
         return false
     }
 
     var loopStopReason: SequentialExecutor.LoopStopReason? {
-        if case let .loopStopped(_, reason) = self { return reason }
+        if case let .loopStopped(_, reason) = kind { return reason }
         return nil
     }
 
     var waitInterval: Duration? {
-        if case let .waitStarted(_, interval) = self { return interval }
+        if case let .waitStarted(_, interval) = kind { return interval }
         return nil
     }
 
     var isScheduledExecutionStarted: Bool {
-        if case .executionStarted(_, .scheduledLoop(loopID: _)) = self { return true }
+        if case .executionStarted(_, .scheduledLoop(loopID: _)) = kind { return true }
         return false
     }
 
     var isScheduledExecutionCancelled: Bool {
-        if case .executionCancelled(_, .scheduledLoop(loopID: _)) = self { return true }
+        if case .executionCancelled(_, .scheduledLoop(loopID: _)) = kind { return true }
         return false
     }
 
     var isImmediateExecutionStarted: Bool {
-        if case .executionStarted(_, .executeNow(requestID: _)) = self { return true }
+        if case .executionStarted(_, .executeNow(requestID: _)) = kind { return true }
         return false
     }
 
     var isImmediateExecutionCancelled: Bool {
-        if case .executionCancelled(_, .executeNow(requestID: _)) = self { return true }
+        if case .executionCancelled(_, .executeNow(requestID: _)) = kind { return true }
         return false
     }
 
     var isImmediateExecutionFinished: Bool {
-        if case .executionFinished(_, .executeNow(requestID: _)) = self { return true }
+        if case .executionFinished(_, .executeNow(requestID: _)) = kind { return true }
         return false
     }
 
     var isImmediateExecutionFailed: Bool {
-        if case .executionFailed(_, .executeNow(requestID: _), _) = self { return true }
+        if case .executionFailed(_, .executeNow(requestID: _), _) = kind { return true }
         return false
     }
 
     var isPolicyUpdated: Bool {
-        if case .policyUpdated = self { return true }
+        if case .policyUpdated = kind { return true }
         return false
     }
 
     var isLoopStopped: Bool {
-        if case .loopStopped = self { return true }
+        if case .loopStopped = kind { return true }
         return false
     }
 
     var isScheduledExecutionFinished: Bool {
-        if case .executionFinished(_, .scheduledLoop(loopID: _)) = self { return true }
+        if case .executionFinished(_, .scheduledLoop(loopID: _)) = kind { return true }
         return false
     }
 
     var isWaitStarted: Bool {
-        if case .waitStarted = self { return true }
+        if case .waitStarted = kind { return true }
         return false
     }
 }
@@ -327,21 +327,23 @@ private extension SequentialExecutor.Event {
     }
 
     let startedEvent = capturedEvents.contains { event in
-        if case let .executionStarted(executionID, source) = event {
+        if case let .executionStarted(executionID, source) = event.kind {
             return executionID == context.executionID && source == context.source
         }
         return false
     }
     let finishedEvent = capturedEvents.contains { event in
-        if case let .executionFinished(executionID, source) = event {
+        if case let .executionFinished(executionID, source) = event.kind {
             return executionID == context.executionID && source == context.source
         }
         return false
     }
+    let eventTimes = capturedEvents.map(\.emittedAt)
 
     #expect(context.source == .executeNow(requestID: 1))
     #expect(startedEvent)
     #expect(finishedEvent)
+    #expect(eventTimes == eventTimes.sorted())
 }
 
 @Test func concurrentExecuteNow_requestsCancelOlderImmediateExecution() async {
@@ -440,7 +442,7 @@ private extension SequentialExecutor.Event {
 
     let snapshot = await events.wait { events in
         events.contains(where: { event in
-            if case let .policyUpdated(previous, new) = event {
+            if case let .policyUpdated(previous, new) = event.kind {
                 return previous == previousPolicy && new == updatedPolicy
             }
             return false
