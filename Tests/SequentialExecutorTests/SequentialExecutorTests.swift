@@ -207,9 +207,16 @@ private final class ExecutionContextRecorder: @unchecked Sendable {
 
 private struct StubError: Error, Sendable {}
 
+// MARK: Event Matchers - General
+
 private extension SequentialExecutor.Event {
     var isRequested: Bool {
         if case .requested = kind { return true }
+        return false
+    }
+
+    var isPolicyUpdated: Bool {
+        if case .policyUpdated = kind { return true }
         return false
     }
 
@@ -218,13 +225,13 @@ private extension SequentialExecutor.Event {
         return false
     }
 
-    var isLoopExited: Bool {
-        if case .loopExited = kind { return true }
+    var isLoopStopped: Bool {
+        if case .loopStopped = kind { return true }
         return false
     }
 
-    var isWaitCancelled: Bool {
-        if case .waitCancelled = kind { return true }
+    var isLoopExited: Bool {
+        if case .loopExited = kind { return true }
         return false
     }
 
@@ -233,11 +240,25 @@ private extension SequentialExecutor.Event {
         return nil
     }
 
+    var isWaitStarted: Bool {
+        if case .waitStarted = kind { return true }
+        return false
+    }
+
+    var isWaitCancelled: Bool {
+        if case .waitCancelled = kind { return true }
+        return false
+    }
+
     var waitInterval: Duration? {
         if case let .waitStarted(_, interval) = kind { return interval }
         return nil
     }
+}
 
+// MARK: Event Matchers - Scheduled Executions
+
+private extension SequentialExecutor.Event {
     var isScheduledExecutionStarted: Bool {
         if case .executionStarted(_, .scheduledLoop(loopID: _)) = kind { return true }
         return false
@@ -248,6 +269,15 @@ private extension SequentialExecutor.Event {
         return false
     }
 
+    var isScheduledExecutionFinished: Bool {
+        if case .executionFinished(_, .scheduledLoop(loopID: _)) = kind { return true }
+        return false
+    }
+}
+
+// MARK: Event Matchers - Immediate Executions
+
+private extension SequentialExecutor.Event {
     var isImmediateExecutionStarted: Bool {
         if case .executionStarted(_, .executeNow(requestID: _)) = kind { return true }
         return false
@@ -267,29 +297,9 @@ private extension SequentialExecutor.Event {
         if case .executionFailed(_, .executeNow(requestID: _), _) = kind { return true }
         return false
     }
-
-    var isPolicyUpdated: Bool {
-        if case .policyUpdated = kind { return true }
-        return false
-    }
-
-    var isLoopStopped: Bool {
-        if case .loopStopped = kind { return true }
-        return false
-    }
-
-    var isScheduledExecutionFinished: Bool {
-        if case .executionFinished(_, .scheduledLoop(loopID: _)) = kind { return true }
-        return false
-    }
-
-    var isWaitStarted: Bool {
-        if case .waitStarted = kind { return true }
-        return false
-    }
 }
 
-// MARK: Immediate Execution
+// MARK: executeNow() Basics
 
 @Test func executeNow_runsTheExecuteClosureOnce() async {
     let invocations = InvocationCounter()
@@ -346,6 +356,24 @@ private extension SequentialExecutor.Event {
     #expect(eventTimes == eventTimes.sorted())
 }
 
+@Test func executeNow_emitsExecutionFailedWhenWorkThrows() async {
+    let events = EventRecorder()
+    let executor = SequentialExecutor(
+        execute: {
+            throw StubError()
+        },
+        eventHandler: { event in
+            events.record(event)
+        }
+    )
+
+    await executor.executeNow()
+
+    #expect(events.snapshot().contains(where: { $0.isImmediateExecutionFailed }))
+}
+
+// MARK: executeNow() Concurrency
+
 @Test func concurrentExecuteNow_requestsCancelOlderImmediateExecution() async {
     let invocations = InvocationCounter()
     let events = EventRecorder()
@@ -389,42 +417,61 @@ private extension SequentialExecutor.Event {
     #expect(finishedCount == 1)
 }
 
-@Test func executeNow_emitsExecutionFailedWhenWorkThrows() async {
+@Test func multipleConcurrentExecuteNow_onlyLatestActuallyRuns() async {
+    let probe = ExecutionProbe()
     let events = EventRecorder()
     let executor = SequentialExecutor(
         execute: {
-            throw StubError()
+            probe.begin()
+            defer { probe.end() }
+            try await Task.sleep(for: .milliseconds(100))
         },
         eventHandler: { event in
             events.record(event)
         }
     )
 
-    await executor.executeNow()
+    let first = Task { await executor.executeNow() }
 
-    #expect(events.snapshot().contains(where: { $0.isImmediateExecutionFailed }))
-}
+    #expect(await events.wait { events in
+        events.contains(where: { $0.isImmediateExecutionStarted })
+    } != nil)
 
-// MARK: Scheduled Loop
+    let second = Task { await executor.executeNow() }
+    let third = Task { await executor.executeNow() }
 
-@Test func scheduledLoop_runsRepeatedlyWithoutOverlappingExecutions() async {
-    let probe = ExecutionProbe()
-    let executor = SequentialExecutor {
-        probe.begin()
-        defer { probe.end() }
-        try await Task.sleep(for: .milliseconds(80))
+    await first.value
+    await second.value
+    await third.value
+
+    let executionSnapshot = probe.snapshot()
+    let eventSnapshot = events.snapshot()
+    let requestedIDs = eventSnapshot.compactMap { event -> UInt? in
+        if case let .requested(requestID) = event.kind { return requestID }
+        return nil
+    }
+    let startedIDs = eventSnapshot.compactMap { event -> UInt? in
+        if case let .executionStarted(_, .executeNow(requestID)) = event.kind { return requestID }
+        return nil
+    }
+    let cancelledIDs = eventSnapshot.compactMap { event -> UInt? in
+        if case let .executionCancelled(_, .executeNow(requestID)) = event.kind { return requestID }
+        return nil
+    }
+    let finishedIDs = eventSnapshot.compactMap { event -> UInt? in
+        if case let .executionFinished(_, .executeNow(requestID)) = event.kind { return requestID }
+        return nil
     }
 
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
-
-    #expect(await probe.wait(timeout: .seconds(3), until: { $0.finishedCount >= 2 }) != nil)
-
-    await executor.updatePolicy(.init())
-
-    let snapshot = probe.snapshot()
-    #expect(snapshot.finishedCount >= 2)
-    #expect(snapshot.maxInFlightCount == 1)
+    #expect(executionSnapshot.maxInFlightCount == 1)
+    #expect(executionSnapshot.startedCount == 2)
+    #expect(requestedIDs == [1, 2, 3])
+    #expect(startedIDs == [1, 3])
+    #expect(cancelledIDs == [1])
+    #expect(finishedIDs == [3])
 }
+
+// MARK: Policy and Loop Lifecycle
 
 @Test func updatePolicy_emitsPolicyUpdatedEvent() async {
     let events = EventRecorder()
@@ -448,6 +495,50 @@ private extension SequentialExecutor.Event {
             return false
         })
     }
+
+    #expect(snapshot != nil)
+}
+
+@Test func settingSamePolicy_doesNotEmitPolicyUpdated() async {
+    let events = EventRecorder()
+    let executor = SequentialExecutor(
+        execute: {},
+        eventHandler: { event in
+            events.record(event)
+        }
+    )
+
+    let policy = SequentialExecutor.Policy(runLoop: .interval(.milliseconds(100)))
+
+    await executor.updatePolicy(policy)
+    await executor.updatePolicy(policy)
+
+    try? await Task.sleep(for: .milliseconds(50))
+
+    let policyUpdatedCount = events.snapshot().filter(\.isPolicyUpdated).count
+    #expect(policyUpdatedCount == 1)
+
+    await executor.updatePolicy(.init())
+}
+
+@Test func enablingLoop_startsScheduledExecution() async {
+    let events = EventRecorder()
+    let executor = SequentialExecutor(
+        execute: {},
+        eventHandler: { event in
+            events.record(event)
+        }
+    )
+
+    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
+
+    let snapshot = await events.wait { events in
+        events.contains(where: { $0.isLoopStarted })
+            && events.contains(where: { $0.isWaitStarted })
+    }
+
+    await executor.updatePolicy(.init())
 
     #expect(snapshot != nil)
 }
@@ -484,7 +575,106 @@ private extension SequentialExecutor.Event {
     #expect(snapshot != nil)
 }
 
-// MARK: Preemptive Scheduled Replacement
+@Test func disablingPolicy_stopsActiveLoop() async {
+    let events = EventRecorder()
+    let executor = SequentialExecutor(
+        execute: {},
+        eventHandler: { event in
+            events.record(event)
+        }
+    )
+
+    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
+
+    #expect(await events.wait { events in
+        events.contains(where: { $0.isLoopStarted })
+    } != nil)
+
+    await executor.updatePolicy(.init())
+
+    let snapshot = await events.wait { events in
+        events.contains(where: { $0.loopStopReason == .policyDisabled })
+    }
+
+    #expect(snapshot != nil)
+}
+
+@Test func disablingLoop_emitsLoopExited() async {
+    let events = EventRecorder()
+    let executor = SequentialExecutor(
+        execute: {},
+        eventHandler: { event in
+            events.record(event)
+        }
+    )
+
+    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
+
+    #expect(await events.wait { events in
+        events.contains(where: { $0.isLoopStarted })
+    } != nil)
+
+    await executor.updatePolicy(.init())
+
+    let snapshot = await events.wait { events in
+        events.contains(where: { $0.isLoopExited })
+    }
+
+    #expect(snapshot != nil)
+}
+
+// MARK: Scheduled Execution Behavior
+
+@Test func scheduledLoop_runsRepeatedlyWithoutOverlappingExecutions() async {
+    let probe = ExecutionProbe()
+    let executor = SequentialExecutor {
+        probe.begin()
+        defer { probe.end() }
+        try await Task.sleep(for: .milliseconds(80))
+    }
+
+    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
+
+    #expect(await probe.wait(timeout: .seconds(3), until: { $0.finishedCount >= 2 }) != nil)
+
+    await executor.updatePolicy(.init())
+
+    let snapshot = probe.snapshot()
+    #expect(snapshot.finishedCount >= 2)
+    #expect(snapshot.maxInFlightCount == 1)
+}
+
+@Test func scheduledExecution_emitsExecutionFinished() async {
+    let events = EventRecorder()
+    let executor = SequentialExecutor(
+        execute: {},
+        eventHandler: { event in
+            events.record(event)
+        }
+    )
+
+    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
+
+    let snapshot = await events.wait { events in
+        events.contains(where: { $0.isScheduledExecutionFinished })
+    }
+
+    await executor.updatePolicy(.init())
+
+    #expect(snapshot != nil)
+
+    if let snapshot {
+        let startedIndex = snapshot.firstIndex(where: { $0.isScheduledExecutionStarted })
+        let finishedIndex = snapshot.firstIndex(where: { $0.isScheduledExecutionFinished })
+        #expect(startedIndex != nil)
+        #expect(finishedIndex != nil)
+        if let startedIndex, let finishedIndex {
+            #expect(startedIndex < finishedIndex)
+        }
+    }
+}
+
+// MARK: Scheduled and Immediate Interaction
 
 @Test func executeNow_cancelsInFlightScheduledExecution_beforeRunningImmediateExecution() async {
     let invocations = InvocationCounter()
@@ -533,34 +723,6 @@ private extension SequentialExecutor.Event {
     }
 }
 
-// MARK: Disabling the Loop
-
-@Test func disablingPolicy_stopsActiveLoop() async {
-    let events = EventRecorder()
-    let executor = SequentialExecutor(
-        execute: {},
-        eventHandler: { event in
-            events.record(event)
-        }
-    )
-
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
-
-    #expect(await events.wait { events in
-        events.contains(where: { $0.isLoopStarted })
-    } != nil)
-
-    await executor.updatePolicy(.init())
-
-    let snapshot = await events.wait { events in
-        events.contains(where: { $0.loopStopReason == .policyDisabled })
-    }
-
-    #expect(snapshot != nil)
-}
-
-// MARK: Loop Resumes After Immediate Execution
-
 @Test func scheduledLoop_resumesAfterExecuteNow() async {
     let events = EventRecorder()
     let executor = SequentialExecutor(
@@ -578,156 +740,9 @@ private extension SequentialExecutor.Event {
 
     await executor.executeNow()
 
-    // After executeNow completes, the loop should restart because policy is still enabled.
     let snapshot = await events.wait { events in
         let loopStartCount = events.filter(\.isLoopStarted).count
         return loopStartCount >= 2
-    }
-
-    await executor.updatePolicy(.init())
-
-    #expect(snapshot != nil)
-}
-
-// MARK: Multiple Concurrent Immediate Executions
-
-@Test func multipleConcurrentExecuteNow_onlyLatestActuallyRuns() async {
-    let probe = ExecutionProbe()
-    let events = EventRecorder()
-    let executor = SequentialExecutor(
-        execute: {
-            probe.begin()
-            defer { probe.end() }
-            try await Task.sleep(for: .milliseconds(100))
-        },
-        eventHandler: { event in
-            events.record(event)
-        }
-    )
-
-    // Start first execution so the others have something to contend with.
-    let first = Task { await executor.executeNow() }
-
-    #expect(await events.wait { events in
-        events.contains(where: { $0.isImmediateExecutionStarted })
-    } != nil)
-
-    // Fire two more concurrent requests while first is in-flight.
-    let second = Task { await executor.executeNow() }
-    let third = Task { await executor.executeNow() }
-
-    await first.value
-    await second.value
-    await third.value
-
-    let snapshot = probe.snapshot()
-    #expect(snapshot.maxInFlightCount == 1)
-    #expect(snapshot.startedCount >= 2)
-}
-
-// MARK: Policy Idempotency
-
-@Test func settingSamePolicy_doesNotEmitPolicyUpdated() async {
-    let events = EventRecorder()
-    let executor = SequentialExecutor(
-        execute: {},
-        eventHandler: { event in
-            events.record(event)
-        }
-    )
-
-    let policy = SequentialExecutor.Policy(runLoop: .interval(.milliseconds(100)))
-
-    await executor.updatePolicy(policy)
-    await executor.updatePolicy(policy)
-
-    // Give a small window for any spurious events to arrive.
-    try? await Task.sleep(for: .milliseconds(50))
-
-    let policyUpdatedCount = events.snapshot().filter(\.isPolicyUpdated).count
-    #expect(policyUpdatedCount == 1)
-
-    await executor.updatePolicy(.init())
-}
-
-// MARK: Loop Exited Event
-
-@Test func disablingLoop_emitsLoopExited() async {
-    let events = EventRecorder()
-    let executor = SequentialExecutor(
-        execute: {},
-        eventHandler: { event in
-            events.record(event)
-        }
-    )
-
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
-
-    #expect(await events.wait { events in
-        events.contains(where: { $0.isLoopStarted })
-    } != nil)
-
-    await executor.updatePolicy(.init())
-
-    let snapshot = await events.wait { events in
-        events.contains(where: { $0.isLoopExited })
-    }
-
-    #expect(snapshot != nil)
-}
-
-// MARK: Scheduled Execution Finishes Successfully
-
-@Test func scheduledExecution_emitsExecutionFinished() async {
-    let events = EventRecorder()
-    let executor = SequentialExecutor(
-        execute: {},
-        eventHandler: { event in
-            events.record(event)
-        }
-    )
-
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
-
-    let snapshot = await events.wait { events in
-        events.contains(where: { $0.isScheduledExecutionFinished })
-    }
-
-    await executor.updatePolicy(.init())
-
-    #expect(snapshot != nil)
-
-    if let snapshot {
-        let startedIndex = snapshot.firstIndex(where: { $0.isScheduledExecutionStarted })
-        let finishedIndex = snapshot.firstIndex(where: { $0.isScheduledExecutionFinished })
-        #expect(startedIndex != nil)
-        #expect(finishedIndex != nil)
-        if let startedIndex, let finishedIndex {
-            #expect(startedIndex < finishedIndex)
-        }
-    }
-}
-
-// MARK: Enabling Loop From Disabled
-
-@Test func enablingLoop_startsScheduledExecution() async {
-    let events = EventRecorder()
-    let executor = SequentialExecutor(
-        execute: {},
-        eventHandler: { event in
-            events.record(event)
-        }
-    )
-
-    // Starts disabled by default.
-    await executor.updatePolicy(.init())
-
-    // Enable the loop.
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
-
-    let snapshot = await events.wait { events in
-        events.contains(where: { $0.isLoopStarted })
-            && events.contains(where: { $0.isWaitStarted })
     }
 
     await executor.updatePolicy(.init())

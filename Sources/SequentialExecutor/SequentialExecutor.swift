@@ -128,8 +128,7 @@ public actor SequentialExecutor {
             case .disabled:
                 self.runLoop = .disabled
             case let .interval(interval):
-                precondition(interval > .zero,
-                             "SequentialExecutor.Policy.runLoop interval must be greater than zero.")
+                precondition(interval > .zero, "SequentialExecutor.Policy.runLoop interval must be greater than zero.")
                 self.runLoop = .interval(interval)
             }
         }
@@ -179,18 +178,11 @@ public actor SequentialExecutor {
         self.eventHandler = eventHandler
     }
 
-    /// Creates a sequential executor.
-    ///
-    /// - Parameters:
-    ///   - execute: The single unit of work to run each time the executor fires.
-    ///     The executor emits the matching `executionStarted` event immediately
-    ///     before awaiting this closure.
-    ///   - eventHandler: An optional observer for lifecycle events.
-    ///     The executor invokes this callback synchronously on its coordination path
-    ///     in the same order the events are emitted. Keep the handler lightweight and
-    ///     non-blocking. If the observer needs heavier work, hand the event off to
-    ///     another queue or task from inside the callback.
-    public init(execute: @escaping @Sendable () async throws -> Void, eventHandler: ((Event) -> Void)? = nil) {
+    /// Convenience overload for work that does not need `ExecutionContext`.
+    public init(
+        execute: @escaping @Sendable () async throws -> Void,
+        eventHandler: ((Event) -> Void)? = nil
+    ) {
         self.init(
             execute: { _ in
                 try await execute()
@@ -215,17 +207,19 @@ public extension SequentialExecutor {
         reconcile(with: policy)
     }
 
-    /// Runs a new immediate execution.
+    /// Requests a new immediate execution.
     ///
     /// Immediate execution has priority over the scheduled loop. If a loop is active,
     /// it is stopped first. If another execution is already running, it is cancelled
-    /// and replaced by the new one.
+    /// and replaced by the new one. If multiple callers race to invoke `executeNow()`,
+    /// only the latest pending request is guaranteed to proceed after cancellation
+    /// coordination completes.
     func executeNow() async {
         await executeImmediately()
     }
 }
 
-// MARK: Policy Coordination
+// MARK: Scheduled Loop Coordination
 
 private extension SequentialExecutor {
     func reconcile(with policy: Policy) {
@@ -312,15 +306,9 @@ private extension SequentialExecutor {
     }
 }
 
-// MARK: Immediate Execution
+// MARK: Immediate Request Coordination
 
 private extension SequentialExecutor {
-    enum ExecutionOutcome: Sendable {
-        case finished
-        case cancelled
-        case failed(any Error)
-    }
-
     func executeImmediately() async {
         latestImmediateExecutionRequestID &+= 1
         let requestID = latestImmediateExecutionRequestID
@@ -352,6 +340,16 @@ private extension SequentialExecutor {
         guard let executionTask else { return }
         executionTask.cancel()
         await executionTask.value
+    }
+}
+
+// MARK: Execution Lifecycle
+
+private extension SequentialExecutor {
+    enum ExecutionOutcome: Sendable {
+        case finished
+        case cancelled
+        case failed(any Error)
     }
 
     func startExecution(source: ExecutionSource) -> Task<Void, Never> {
@@ -396,7 +394,7 @@ private extension SequentialExecutor {
     }
 }
 
-// MARK: Events
+// MARK: Event Emission
 
 private extension SequentialExecutor {
     func emit(_ kind: Event.Kind, emittedAt: Date = .now) {
@@ -404,8 +402,10 @@ private extension SequentialExecutor {
     }
 }
 
+// MARK: Utilities
+
 private extension UUID {
-    /// Generates a UUIDv7-style identifier for executor events.
+    /// Generates a UUIDv7-style identifier for executor loop and execution IDs.
     ///
     /// The executor uses time-ordered IDs so loop and execution logs are easier to
     /// read in chronological order.
