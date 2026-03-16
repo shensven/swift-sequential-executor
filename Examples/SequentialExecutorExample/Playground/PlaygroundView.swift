@@ -168,7 +168,7 @@ struct PlaygroundView: View {
             }
             .formStyle(.grouped)
 
-            List(vm.eventList) { event in
+            List(vm.eventList, selection: $vm.selectedEventID) { event in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(event.title).font(.body.weight(.medium))
                     Text(event.subtitle).font(.caption).foregroundStyle(.secondary)

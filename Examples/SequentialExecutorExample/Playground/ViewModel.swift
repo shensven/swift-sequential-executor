@@ -58,6 +58,7 @@ final class ViewModel {
 
     // MARK: - Outputs
 
+    var selectedEventID: EventRecord.ID?
     private(set) var eventList: [EventRecord] = []
     private(set) var displayedSimulationDurationMilliseconds = 9900
     private(set) var isExecuting = false
@@ -123,6 +124,7 @@ final class ViewModel {
 
     func clearEventHistory() {
         eventList.removeAll()
+        selectedEventID = nil
     }
 
     // MARK: - Simulation API
@@ -297,6 +299,10 @@ final class ViewModel {
             subtitle: "\(timestampText()) • \(event.detail)"
         ))
         eventList = Array(eventList.suffix(40))
+
+        if let selectedEventID, !eventList.contains(where: { $0.id == selectedEventID }) {
+            self.selectedEventID = nil
+        }
     }
 
     private func timestampText() -> String {
@@ -310,7 +316,7 @@ final class ViewModel {
     // MARK: - Executor
 
     private func makeExecutor() -> SequentialExecutor {
-        SequentialExecutor(
+        .init(
             execute: { [weak self] in
                 let duration = await self?.startExecutionCountdown() ?? 0
                 try await self?.simulateExecution(durationMilliseconds: duration)
