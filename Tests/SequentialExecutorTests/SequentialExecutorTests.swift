@@ -190,6 +190,21 @@ private final class EventRecorder: @unchecked Sendable {
     }
 }
 
+private final class ExecutionContextRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var contexts: [SequentialExecutor.ExecutionContext] = []
+
+    func record(_ context: SequentialExecutor.ExecutionContext) {
+        lock.withLock {
+            contexts.append(context)
+        }
+    }
+
+    func snapshot() -> [SequentialExecutor.ExecutionContext] {
+        lock.withLock { contexts }
+    }
+}
+
 private struct StubError: Error, Sendable {}
 
 private extension SequentialExecutor.Event {
@@ -285,6 +300,48 @@ private extension SequentialExecutor.Event {
     await executor.executeNow()
 
     #expect(invocations.value() == 1)
+}
+
+@Test func executeNow_passesExecutionContextMatchingLifecycleEvents() async {
+    let contexts = ExecutionContextRecorder()
+    let events = EventRecorder()
+    let executor = SequentialExecutor(
+        execute: { context in
+            contexts.record(context)
+        },
+        eventHandler: { event in
+            events.record(event)
+        }
+    )
+
+    await executor.executeNow()
+
+    let capturedContexts = contexts.snapshot()
+    let capturedEvents = events.snapshot()
+
+    #expect(capturedContexts.count == 1)
+
+    guard let context = capturedContexts.first else {
+        Issue.record("Expected the executor to pass one execution context.")
+        return
+    }
+
+    let startedEvent = capturedEvents.contains { event in
+        if case let .executionStarted(executionID, source) = event {
+            return executionID == context.executionID && source == context.source
+        }
+        return false
+    }
+    let finishedEvent = capturedEvents.contains { event in
+        if case let .executionFinished(executionID, source) = event {
+            return executionID == context.executionID && source == context.source
+        }
+        return false
+    }
+
+    #expect(context.source == .executeNow(requestID: 1))
+    #expect(startedEvent)
+    #expect(finishedEvent)
 }
 
 @Test func concurrentExecuteNow_requestsCancelOlderImmediateExecution() async {

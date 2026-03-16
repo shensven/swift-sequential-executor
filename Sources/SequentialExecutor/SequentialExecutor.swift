@@ -55,15 +55,28 @@ public actor SequentialExecutor {
     }
 
     /// Describes what triggered an execution.
-    public enum ExecutionSource: Sendable {
+    public enum ExecutionSource: Sendable, Equatable {
         /// Identifies an explicit `executeNow()` request.
         case executeNow(requestID: UInt)
         /// Identifies a scheduled loop tick.
         case scheduledLoop(loopID: UUID)
     }
 
+    /// Describes the execution currently being run.
+    public struct ExecutionContext: Sendable, Equatable {
+        /// Identifies this specific execution.
+        public let executionID: UUID
+        /// Describes what triggered this execution.
+        public let source: ExecutionSource
+
+        public init(executionID: UUID, source: ExecutionSource) {
+            self.executionID = executionID
+            self.source = source
+        }
+    }
+
     /// Explains why a scheduled loop stopped.
-    public enum LoopStopReason: Sendable {
+    public enum LoopStopReason: Sendable, Equatable {
         /// Indicates that an immediate execution request stopped the loop.
         case executeNowRequested
         /// Indicates that the loop policy disabled the loop.
@@ -106,7 +119,7 @@ public actor SequentialExecutor {
 
     // MARK: Stored Properties
 
-    private let execute: @Sendable () async throws -> Void
+    private let execute: @Sendable (ExecutionContext) async throws -> Void
     private let eventHandler: ((Event) -> Void)?
 
     private var loopTask: Task<Void, Never>?
@@ -125,10 +138,29 @@ public actor SequentialExecutor {
     ///
     /// - Parameters:
     ///   - execute: The single unit of work to run each time the executor fires.
+    ///     The executor passes the current execution context, including the
+    ///     execution identifier and the trigger source.
     ///   - eventHandler: An optional observer for lifecycle events.
-    public init(execute: @escaping @Sendable () async throws -> Void, eventHandler: ((Event) -> Void)? = nil) {
+    public init(
+        execute: @escaping @Sendable (ExecutionContext) async throws -> Void,
+        eventHandler: ((Event) -> Void)? = nil
+    ) {
         self.execute = execute
         self.eventHandler = eventHandler
+    }
+
+    /// Creates a sequential executor.
+    ///
+    /// - Parameters:
+    ///   - execute: The single unit of work to run each time the executor fires.
+    ///   - eventHandler: An optional observer for lifecycle events.
+    public init(execute: @escaping @Sendable () async throws -> Void, eventHandler: ((Event) -> Void)? = nil) {
+        self.init(
+            execute: { _ in
+                try await execute()
+            },
+            eventHandler: eventHandler
+        )
     }
 
     deinit {
@@ -289,13 +321,14 @@ private extension SequentialExecutor {
     func startExecution(source: ExecutionSource) -> Task<Void, Never> {
         let execute = self.execute
         let executionID = UUID.sequentialExecutorV7()
+        let context = ExecutionContext(executionID: executionID, source: source)
         let task = Task { [weak self, execute] in
             await self?.emit(.executionStarted(executionID: executionID, source: source))
 
             let outcome: ExecutionOutcome
             do {
                 try Task.checkCancellation()
-                try await execute()
+                try await execute(context)
                 try Task.checkCancellation()
                 outcome = .finished
             } catch is CancellationError {
