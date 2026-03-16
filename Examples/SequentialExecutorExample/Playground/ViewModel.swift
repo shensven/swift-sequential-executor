@@ -58,6 +58,7 @@ final class ViewModel {
 
     // MARK: - Outputs
 
+    var logLimit = 20
     var selectedEventID: EventRecord.ID?
     private(set) var eventList: [EventRecord] = []
     private(set) var displayedSimulationDurationMilliseconds = 9900
@@ -125,6 +126,11 @@ final class ViewModel {
     func clearEventHistory() {
         eventList.removeAll()
         selectedEventID = nil
+    }
+
+    func setLogLimit(_ limit: Int) {
+        logLimit = max(limit, 1)
+        trimEventHistory()
     }
 
     // MARK: - Simulation API
@@ -298,7 +304,11 @@ final class ViewModel {
             title: event.title,
             subtitle: "\(timestampText()) • \(event.detail)"
         ))
-        eventList = Array(eventList.suffix(40))
+        trimEventHistory()
+    }
+
+    private func trimEventHistory() {
+        eventList = Array(eventList.suffix(logLimit))
 
         if let selectedEventID, !eventList.contains(where: { $0.id == selectedEventID }) {
             self.selectedEventID = nil

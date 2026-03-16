@@ -22,6 +22,10 @@ struct ContentView: View {
         selectedView.toolbar {
             Toolbar(
                 selection: $toolbarSelection,
+                logLimit: Binding(
+                    get: { vm.logLimit },
+                    set: vm.setLogLimit
+                ),
                 onClear: vm.clearEventHistory
             )
         }

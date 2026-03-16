@@ -14,6 +14,7 @@ enum ToolbarSelection: String, CaseIterable {
 
 struct Toolbar: ToolbarContent {
     @Binding var selection: ToolbarSelection
+    @Binding var logLimit: Int
     let onClear: () -> Void
 
     var body: some ToolbarContent {
@@ -25,8 +26,18 @@ struct Toolbar: ToolbarContent {
                         Text($0.rawValue.uppercased())
                     }
                 },
-                label: { EmptyView() }
+                label: {
+                    Text("Category")
+                }
             ).pickerStyle(.segmented)
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            Picker("Log Limit", selection: $logLimit) {
+                ForEach([10, 20, 50, 100], id: \.self) { limit in
+                    Text("\(limit)").tag(limit)
+                }
+            }
         }
 
         ToolbarItem(placement: .primaryAction) {
