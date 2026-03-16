@@ -13,6 +13,12 @@ import Foundation
 /// `executeNow()` has higher priority than the scheduled loop. It stops the current
 /// loop, cancels any in-flight execution, runs a new immediate execution, and then
 /// lets the loop resume from a clean state.
+///
+/// The public surface is intentionally small:
+/// - `execute` defines the unit of work.
+/// - `eventHandler` observes lifecycle events in emission order.
+/// - `updatePolicy(_:)` controls the scheduled loop.
+/// - `executeNow()` requests a higher-priority immediate execution.
 public actor SequentialExecutor {
     /// Reports the executor's observable lifecycle.
     ///
@@ -27,6 +33,9 @@ public actor SequentialExecutor {
             /// Reports that a caller requested an immediate execution.
             case requested(requestID: UInt)
             /// Reports that a single execution started.
+            ///
+            /// The executor emits this immediately before awaiting `execute(context)`
+            /// for the matching `executionID`.
             case executionStarted(executionID: UUID, source: ExecutionSource)
             /// Reports that a single execution finished successfully.
             case executionFinished(executionID: UUID, source: ExecutionSource)
@@ -55,7 +64,7 @@ public actor SequentialExecutor {
             case intervalElapsed(loopID: UUID)
         }
 
-        /// The time when the executor emitted this event.
+        /// The time when the executor emitted this event on its coordination path.
         public let emittedAt: Date
         /// The lifecycle payload emitted at `emittedAt`.
         public let kind: Kind
@@ -77,8 +86,12 @@ public actor SequentialExecutor {
     /// Describes the execution currently being run.
     public struct ExecutionContext: Sendable, Equatable {
         /// Identifies this specific execution.
+        ///
+        /// The same identifier appears in the matching execution lifecycle events.
         public let executionID: UUID
         /// Describes what triggered this execution.
+        ///
+        /// The same source appears in the matching execution lifecycle events.
         public let source: ExecutionSource
 
         public init(executionID: UUID, source: ExecutionSource) {
@@ -151,7 +164,8 @@ public actor SequentialExecutor {
     /// - Parameters:
     ///   - execute: The single unit of work to run each time the executor fires.
     ///     The executor passes the current execution context, including the
-    ///     execution identifier and the trigger source.
+    ///     execution identifier and the trigger source. The executor emits the
+    ///     matching `executionStarted` event immediately before awaiting this closure.
     ///   - eventHandler: An optional observer for lifecycle events.
     ///     The executor invokes this callback synchronously on its coordination path
     ///     in the same order the events are emitted. Keep the handler lightweight and
@@ -169,6 +183,8 @@ public actor SequentialExecutor {
     ///
     /// - Parameters:
     ///   - execute: The single unit of work to run each time the executor fires.
+    ///     The executor emits the matching `executionStarted` event immediately
+    ///     before awaiting this closure.
     ///   - eventHandler: An optional observer for lifecycle events.
     ///     The executor invokes this callback synchronously on its coordination path
     ///     in the same order the events are emitted. Keep the handler lightweight and
