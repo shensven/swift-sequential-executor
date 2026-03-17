@@ -13,8 +13,8 @@ struct ContentView: View {
 
     @ViewBuilder private var selectedView: some View {
         switch principalCategory {
-        case .playground: PlaygroundView(vm: vm).id(PrincipalCategory.playground).transition(.move(edge: .leading))
-        case .document: DocumentView().id(PrincipalCategory.document).transition(.move(edge: .trailing))
+        case .playground: PlaygroundView(vm: vm).id(PrincipalCategory.playground).transition(.move(edge: .leading).combined(with: .blurReplace))
+        case .document: DocumentView().id(PrincipalCategory.document).transition(.move(edge: .trailing).combined(with: .blurReplace))
         }
     }
 
