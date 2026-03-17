@@ -20,14 +20,46 @@ final class ViewModel {
         .second(.twoDigits)
         .secondFraction(.fractional(3))
 
-    static let simulationDurationRangeMilliseconds: ClosedRange<Int> = 100 ... 9900
+    static let runLoopIntervalRangeSeconds: ClosedRange<Double> = 1 ... 9
+    static let executionDurationRangeMilliseconds: ClosedRange<Int> = 1000 ... 9000
 
     // MARK: - Types
 
     struct CountdownSnapshot {
+        let isActive: Bool
         let progress: Double
         let leftSeconds: Double
         let totalSeconds: Double
+    }
+
+    struct NextExecutionStrategy: Equatable {
+        var usesRandomDuration = false
+        var fixedDurationMilliseconds = 9000
+        var successRate = 1.0
+    }
+
+    struct ExecutionPlan {
+        enum FailureMode {
+            case none
+            case immediate
+            case scheduled(afterMilliseconds: Int)
+        }
+
+        let durationMilliseconds: Int
+        let failureMode: FailureMode
+    }
+
+    struct ActiveExecution {
+        let executionID: UUID
+        let source: SequentialExecutor.ExecutionSource
+        let plan: ExecutionPlan
+        var isFailureRequested = false
+    }
+
+    struct PendingExecutionStart {
+        let executionID: UUID
+        let source: SequentialExecutor.ExecutionSource
+        var isFailureRequested = false
     }
 
     struct EventRecord: Identifiable {
@@ -47,61 +79,73 @@ final class ViewModel {
         }
     }
 
-    var runLoopSelection: RunLoopSelection = .disabled
-    var runLoopIntervalSeconds: Double = 5.0
+    struct RunLoopConfig: Equatable {
+        var selection: RunLoopSelection = .disabled
+        var intervalSeconds: Double = 5.0
+    }
 
-    // MARK: - Simulation
+    // The controls edit the desired policy immediately.
+    // The wait ring only trusts the last policy confirmed by `.policyUpdated`.
+    private(set) var runLoopConfig = RunLoopConfig()
+    private var appliedRunLoopConfig = RunLoopConfig()
 
-    var usesRandomSimulationDuration = false
-    var configuredSimulationDurationMilliseconds = 9900
-    var simulationSuccessRate = 1.0
+    // MARK: - Next execution strategy
+
+    /// These inputs configure the next execution that starts.
+    /// Once an execution is prepared, its plan is frozen by `executionID`.
+    private(set) var nextExecutionStrategy = NextExecutionStrategy()
 
     // MARK: - Outputs
 
-    var logLimit = 20
+    private(set) var logLimit = 20
     var selectedEventID: EventRecord.ID?
     private(set) var eventList: [EventRecord] = []
-    private(set) var displayedSimulationDurationMilliseconds = 9900
-    private(set) var isExecuting = false
-
-    var sliderSimulationDurationMilliseconds: Int {
-        usesRandomSimulationDuration
-            ? displayedSimulationDurationMilliseconds
-            : configuredSimulationDurationMilliseconds
+    private(set) var nextExecutionPreviewDurationMilliseconds = 9000
+    var isExecuting: Bool {
+        activeExecution != nil || pendingExecutionStart != nil
     }
 
     // MARK: - Internals
 
     private var policy: SequentialExecutor.Policy {
-        switch runLoopSelection {
+        switch runLoopConfig.selection {
         case .disabled: return .init()
         case .interval: return .init(runLoop: .interval(.milliseconds(runLoopIntervalMilliseconds)))
         }
     }
 
     private var runLoopIntervalMilliseconds: Int {
-        Int((runLoopIntervalSeconds * 10).rounded() * 100)
+        Int((runLoopConfig.intervalSeconds * 10).rounded() * 100)
     }
 
     @ObservationIgnored private var waitCountdown = CountdownState()
     @ObservationIgnored private var executionCountdown = CountdownState()
     @ObservationIgnored private var waitLoopID: UUID?
-    @ObservationIgnored private var forceFailNow = false
-    @ObservationIgnored private var forceFailNext = false
+    // `.executionStarted` can reach the UI before the main-actor simulator has
+    // finished preparing the matching execution plan. Keep a lightweight placeholder
+    // so the wait ring does not briefly reappear and `Fail Now` can still target
+    // the correct execution.
+    private var pendingExecutionStart: PendingExecutionStart?
+    private var activeExecution: ActiveExecution?
     @ObservationIgnored private var pendingPolicy: SequentialExecutor.Policy?
     @ObservationIgnored private var policyUpdateTask: Task<Void, Never>?
     @ObservationIgnored private lazy var executor = makeExecutor()
 
     init() {
+        refreshNextExecutionPreview()
         updatePolicy()
     }
 
     // MARK: - Policy API
 
-    func updatePolicy() {
-        if runLoopSelection == .disabled {
-            waitCountdown.reset()
-        }
+    func setRunLoopConfig(_ config: RunLoopConfig) {
+        let normalized = normalizedRunLoopConfig(from: config)
+        guard runLoopConfig != normalized else { return }
+        runLoopConfig = normalized
+        updatePolicy()
+    }
+
+    private func updatePolicy() {
         enqueuePolicyUpdate()
     }
 
@@ -115,12 +159,16 @@ final class ViewModel {
         }
     }
 
-    func failNow() {
-        if isExecuting {
-            forceFailNow = true
-        } else {
-            forceFailNext = true
+    func requestFailure() {
+        if var activeExecution {
+            activeExecution.isFailureRequested = true
+            self.activeExecution = activeExecution
+            return
         }
+
+        guard var pendingExecutionStart else { return }
+        pendingExecutionStart.isFailureRequested = true
+        self.pendingExecutionStart = pendingExecutionStart
     }
 
     func clearEventHistory() {
@@ -133,38 +181,37 @@ final class ViewModel {
         trimEventHistory()
     }
 
-    // MARK: - Simulation API
+    // MARK: - Next execution strategy API
 
-    func setSimulationUsesRandomDuration(_ isEnabled: Bool) {
-        if isEnabled {
-            displayedSimulationDurationMilliseconds = Self.randomSimulationDurationMilliseconds()
-        } else {
-            configuredSimulationDurationMilliseconds = displayedSimulationDurationMilliseconds
-        }
-        usesRandomSimulationDuration = isEnabled
-        syncSimulationDurationDisplay()
-        executeNow()
+    func setNextExecutionUsesRandomDuration(_ isEnabled: Bool) {
+        nextExecutionStrategy.usesRandomDuration = isEnabled
+        refreshNextExecutionPreview()
     }
 
-    func setSimulationDuration(milliseconds: Int) {
-        configuredSimulationDurationMilliseconds = min(
-            max(milliseconds, Self.simulationDurationRangeMilliseconds.lowerBound),
-            Self.simulationDurationRangeMilliseconds.upperBound
+    func setNextExecutionFixedDuration(milliseconds: Int) {
+        nextExecutionStrategy.fixedDurationMilliseconds = min(
+            max(milliseconds, Self.executionDurationRangeMilliseconds.lowerBound),
+            Self.executionDurationRangeMilliseconds.upperBound
         )
-        syncSimulationDurationDisplay()
+        refreshNextExecutionPreview()
     }
 
-    func setSimulationSuccessRate(_ rate: Double) {
-        simulationSuccessRate = min(max(rate, 0), 1)
+    func setNextExecutionSuccessRate(_ rate: Double) {
+        nextExecutionStrategy.successRate = min(max(rate, 0), 1)
     }
 
     // MARK: - Snapshots
 
     func waitSnapshot(at date: Date) -> CountdownSnapshot {
-        let configuredTotal = runLoopIntervalSeconds
+        let configuredTotal =
+            appliedRunLoopConfig.selection == .interval
+                ? appliedRunLoopConfig.intervalSeconds
+                : 0
         let activeTotal = waitCountdown.totalSeconds
+        let isActive = waitCountdown.isActive(at: date)
         let totalSeconds = activeTotal > 0 ? activeTotal : configuredTotal
         return .init(
+            isActive: isActive,
             progress: waitCountdown.progress(at: date),
             leftSeconds: waitCountdown.remainingSeconds(at: date),
             totalSeconds: totalSeconds
@@ -172,48 +219,101 @@ final class ViewModel {
     }
 
     func executionSnapshot(at date: Date) -> CountdownSnapshot {
-        .init(
+        let displayedDurationMilliseconds =
+            activeExecution?.plan.durationMilliseconds ?? nextExecutionPreviewDurationMilliseconds
+        return .init(
+            isActive: executionCountdown.isActive(at: date),
             progress: executionCountdown.progress(at: date),
             leftSeconds: executionCountdown.remainingSeconds(at: date),
-            totalSeconds: Double(displayedSimulationDurationMilliseconds) / 1000
+            totalSeconds: Double(displayedDurationMilliseconds) / 1000
         )
     }
 
     // MARK: - Execution lifecycle
 
-    private func startExecutionCountdown() -> Int {
-        let duration: Int
-        if usesRandomSimulationDuration {
-            duration = Self.randomSimulationDurationMilliseconds()
-        } else {
-            duration = configuredSimulationDurationMilliseconds
-        }
-
-        displayedSimulationDurationMilliseconds = duration
-        waitCountdown.reset()
-        executionCountdown.start(milliseconds: duration)
-        return duration
+    private func runExecution(context: SequentialExecutor.ExecutionContext) async throws {
+        let activeExecution = beginExecution(context: context)
+        defer { endExecution(executionID: context.executionID) }
+        try await simulateExecution(activeExecution)
     }
 
-    private func simulateExecution(durationMilliseconds: Int) async throws {
-        let clampedRate = min(max(simulationSuccessRate, 0), 1)
-        let failureChance = 1 - clampedRate
-        let willFail = Double.random(in: 0 ... 1) < failureChance
-        let endDate = Date().addingTimeInterval(Double(max(durationMilliseconds, 0)) / 1000)
+    private func beginExecution(context: SequentialExecutor.ExecutionContext) -> ActiveExecution {
+        let duration =
+            nextExecutionStrategy.usesRandomDuration
+                ? nextExecutionPreviewDurationMilliseconds
+                : nextExecutionStrategy.fixedDurationMilliseconds
 
-        var scheduledFailureDate: Date?
-        if forceFailNext {
-            forceFailNext = false
-            scheduledFailureDate = Date()
-        } else if willFail, durationMilliseconds > 0 {
-            let failureTime = Int.random(in: 0 ... durationMilliseconds)
-            scheduledFailureDate = Date().addingTimeInterval(Double(failureTime) / 1000)
+        let clampedRate = min(max(nextExecutionStrategy.successRate, 0), 1)
+        let failureMode: ExecutionPlan.FailureMode
+        if clampedRate <= 0 {
+            failureMode = .immediate
+        } else if clampedRate >= 1 {
+            failureMode = .none
+        } else {
+            let failureChance = 1 - clampedRate
+            if Double.random(in: 0 ..< 1) < failureChance {
+                let failureTime = Int.random(in: 0 ... duration)
+                if failureTime == 0 {
+                    failureMode = .immediate
+                } else {
+                    failureMode = .scheduled(afterMilliseconds: failureTime)
+                }
+            } else {
+                failureMode = .none
+            }
+        }
+
+        let isFailureRequested = pendingExecutionStart?.executionID == context.executionID
+            ? pendingExecutionStart?.isFailureRequested ?? false
+            : false
+
+        let activeExecution = ActiveExecution(
+            executionID: context.executionID,
+            source: context.source,
+            plan: .init(durationMilliseconds: duration, failureMode: failureMode),
+            isFailureRequested: isFailureRequested
+        )
+
+        pendingExecutionStart = nil
+        self.activeExecution = activeExecution
+        waitLoopID = nil
+        waitCountdown.reset()
+
+        switch activeExecution.plan.failureMode {
+        case .none, .scheduled:
+            executionCountdown.start(milliseconds: activeExecution.plan.durationMilliseconds)
+        case .immediate:
+            executionCountdown.reset()
+        }
+
+        return activeExecution
+    }
+
+    private func endExecution(executionID: UUID) {
+        if activeExecution?.executionID == executionID {
+            activeExecution = nil
+            executionCountdown.reset()
+        }
+        if pendingExecutionStart?.executionID == executionID {
+            pendingExecutionStart = nil
+        }
+        refreshNextExecutionPreview()
+    }
+
+    private func simulateExecution(_ activeExecution: ActiveExecution) async throws {
+        let plan = activeExecution.plan
+        let endDate = Date().addingTimeInterval(Double(max(plan.durationMilliseconds, 0)) / 1000)
+
+        let scheduledFailureDate: Date?
+        switch plan.failureMode {
+        case .none: scheduledFailureDate = nil
+        case .immediate: throw ExecutionFailure.simulated
+        case let .scheduled(afterMilliseconds): scheduledFailureDate = Date().addingTimeInterval(Double(afterMilliseconds) / 1000)
         }
 
         while true {
             let now = Date()
-            if forceFailNow {
-                forceFailNow = false
+            if shouldFailExecution(executionID: activeExecution.executionID) {
                 throw ExecutionFailure.simulated
             }
             if let scheduledFailureDate, now >= scheduledFailureDate {
@@ -233,10 +333,43 @@ final class ViewModel {
         }
     }
 
-    private func syncSimulationDurationDisplay(now: Date = .now) {
-        guard !executionCountdown.isActive(at: now) else { return }
-        guard !usesRandomSimulationDuration else { return }
-        displayedSimulationDurationMilliseconds = configuredSimulationDurationMilliseconds
+    private func shouldFailExecution(executionID: UUID) -> Bool {
+        guard var activeExecution else { return false }
+        guard activeExecution.executionID == executionID else { return false }
+        guard activeExecution.isFailureRequested else { return false }
+        activeExecution.isFailureRequested = false
+        self.activeExecution = activeExecution
+        return true
+    }
+
+    private func refreshNextExecutionPreview() {
+        if nextExecutionStrategy.usesRandomDuration {
+            nextExecutionPreviewDurationMilliseconds = Self.randomExecutionDurationMilliseconds()
+        } else {
+            nextExecutionPreviewDurationMilliseconds = nextExecutionStrategy.fixedDurationMilliseconds
+        }
+    }
+
+    private func normalizedRunLoopConfig(from config: RunLoopConfig) -> RunLoopConfig {
+        var normalized = config
+        let clampedSeconds = min(
+            max(normalized.intervalSeconds, Self.runLoopIntervalRangeSeconds.lowerBound),
+            Self.runLoopIntervalRangeSeconds.upperBound
+        )
+        normalized.intervalSeconds = clampedSeconds.rounded()
+        return normalized
+    }
+
+    private func runLoopConfig(from policy: SequentialExecutor.Policy) -> RunLoopConfig {
+        switch policy.runLoop {
+        case .disabled:
+            return .init(selection: .disabled, intervalSeconds: 5.0)
+        case let .interval(interval):
+            return .init(
+                selection: .interval,
+                intervalSeconds: Double(interval.millisecondsValue) / 1000
+            )
+        }
     }
 
     private func enqueuePolicyUpdate() {
@@ -263,75 +396,100 @@ final class ViewModel {
     private func handle(_ event: SequentialExecutor.Event) {
         append(event)
 
-        switch event {
+        // The wait ring stays event-driven. Execution UI state is bridged through
+        // `pendingExecutionStart` and `activeExecution` so the demo still matches
+        // real execution start even when event delivery and the main-actor simulator
+        // interleave differently.
+        switch event.kind {
         case let .waitStarted(loopID, interval):
+            guard activeExecution == nil, pendingExecutionStart == nil else { break }
             executionCountdown.reset()
             waitLoopID = loopID
             waitCountdown.start(milliseconds: interval.millisecondsValue)
 
-        case let .waitCancelled(loopID),
-             let .waitFailed(loopID, _),
-             let .intervalElapsed(loopID):
+        case let .waitCancelled(loopID), let .waitFailed(loopID, _), let .intervalElapsed(loopID):
             if waitLoopID == loopID {
                 waitLoopID = nil
                 waitCountdown.reset()
             }
 
-        case let .loopStopped(loopID, _),
-             let .loopExited(loopID):
+        case let .loopStopped(loopID, _), let .loopExited(loopID):
             if waitLoopID == loopID {
                 waitLoopID = nil
                 waitCountdown.reset()
             }
 
-        case .executionStarted:
-            isExecuting = true
+        case let .executionStarted(executionID, source):
+            if activeExecution?.executionID != executionID {
+                let wasFailureRequested = pendingExecutionStart?.executionID == executionID
+                    ? pendingExecutionStart?.isFailureRequested ?? false
+                    : false
+                pendingExecutionStart = .init(
+                    executionID: executionID,
+                    source: source,
+                    isFailureRequested: wasFailureRequested
+                )
+            } else {
+                pendingExecutionStart = nil
+            }
             waitLoopID = nil
             waitCountdown.reset()
 
-        case .executionFinished, .executionCancelled, .executionFailed:
-            isExecuting = false
-            forceFailNow = false
-            executionCountdown.reset()
+        case let .executionFinished(executionID, _), let .executionCancelled(executionID, _), let .executionFailed(executionID, _, _):
+            let cleanedVisibleExecution =
+                activeExecution?.executionID == executionID || pendingExecutionStart?.executionID == executionID
 
-        case .requested, .loopStarted, .policyUpdated:
-            break
+            if activeExecution?.executionID == executionID {
+                activeExecution = nil
+                executionCountdown.reset()
+            }
+            if pendingExecutionStart?.executionID == executionID {
+                pendingExecutionStart = nil
+            }
+            if cleanedVisibleExecution {
+                refreshNextExecutionPreview()
+            }
+
+        case let .policyUpdated(_, new): appliedRunLoopConfig = runLoopConfig(from: new)
+
+        case .requested, .loopStarted: break
         }
     }
 
     private func append(_ event: SequentialExecutor.Event) {
         eventList.append(.init(
-            title: event.title,
-            subtitle: "\(timestampText()) • \(event.detail)"
+            title: event.kind.title,
+            subtitle: "\(timestampText(event.emittedAt)) • \(event.kind.detail)"
         ))
         trimEventHistory()
     }
 
     private func trimEventHistory() {
         eventList = Array(eventList.suffix(logLimit))
-
         if let selectedEventID, !eventList.contains(where: { $0.id == selectedEventID }) {
             self.selectedEventID = nil
         }
     }
 
-    private func timestampText() -> String {
-        Date.now.formatted(Self.timestampFormat)
+    private func timestampText(_ date: Date) -> String {
+        date.formatted(Self.timestampFormat)
     }
 
-    private static func randomSimulationDurationMilliseconds() -> Int {
-        Int.random(in: 1 ... 99) * 100
+    private static func randomExecutionDurationMilliseconds() -> Int {
+        Int.random(in: 1 ... 9) * 1000
     }
 
     // MARK: - Executor
 
     private func makeExecutor() -> SequentialExecutor {
-        .init(
-            execute: { [weak self] in
-                let duration = await self?.startExecutionCountdown() ?? 0
-                try await self?.simulateExecution(durationMilliseconds: duration)
+        return SequentialExecutor(
+            execute: { [weak self] context in
+                guard let self else { return }
+                try await self.runExecution(context: context)
             },
             eventHandler: { [weak self] event in
+                // The executor emits events synchronously on its own coordination path.
+                // The example forwards them onto the main actor before touching UI state.
                 Task { @MainActor in
                     self?.handle(event)
                 }
@@ -390,7 +548,7 @@ private extension Duration {
     }
 }
 
-private extension SequentialExecutor.Event {
+private extension SequentialExecutor.Event.Kind {
     var title: String {
         switch self {
         case let .requested(requestID): "requested #\(requestID)"
@@ -440,10 +598,8 @@ private extension SequentialExecutor.Event {
 private extension SequentialExecutor.Policy {
     var description: String {
         switch runLoop {
-        case .disabled:
-            return "disabled"
-        case let .interval(interval):
-            return "interval: \(interval.millisecondsValue)ms"
+        case .disabled: return "disabled"
+        case let .interval(interval): return "interval: \(interval.millisecondsValue)ms"
         }
     }
 }

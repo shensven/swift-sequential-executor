@@ -8,17 +8,17 @@
 import SwiftUI
 
 struct CountdownValueText: View, Animatable {
+    var isActive: Bool
     var left: Double
     var total: Double
-    var label: String
+    var inactiveStateText = "Idle"
 
     var animatableData: Double {
         get { left }
         set { left = newValue }
     }
 
-    private static let secondsFormat =
-        FloatingPointFormatStyle<Double>.number.precision(.fractionLength(1))
+    private static let secondsFormat = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(1))
 
     private var leftText: String {
         left.formatted(Self.secondsFormat)
@@ -30,18 +30,17 @@ struct CountdownValueText: View, Animatable {
 
     var body: some View {
         VStack(spacing: 0) {
-            if total <= 0 {
-                Text("nil").monospacedDigit()
-            } else if left <= 0 {
-                Text("nil / \(totalText)").monospacedDigit()
-            } else {
+            if isActive {
                 Text("\(leftText) / \(totalText)").monospacedDigit()
+                Text("remaining").font(.footnote).foregroundStyle(.secondary)
+            } else {
+                Text(inactiveStateText).fontWeight(.medium)
+                Text("status").font(.footnote).foregroundStyle(.secondary)
             }
-            Text(label).font(.footnote).opacity(0.7)
-        }
+        }.transaction { $0.animation = nil }
     }
 }
 
 #Preview {
-    CountdownValueText(left: 0, total: 0, label: "wait")
+    CountdownValueText(isActive: false, left: 0, total: 0)
 }

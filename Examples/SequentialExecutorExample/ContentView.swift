@@ -9,25 +9,18 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var vm = ViewModel()
-    @State private var toolbarSelection: ToolbarSelection = .playground
+    @State private var principalCategory: PrincipalCategory = .playground
 
     @ViewBuilder private var selectedView: some View {
-        switch toolbarSelection {
-        case .playground: PlaygroundView(vm: vm).id(ToolbarSelection.playground).transition(.move(edge: .leading))
-        case .document: DocumentView().id(ToolbarSelection.document).transition(.move(edge: .trailing))
+        switch principalCategory {
+        case .playground: PlaygroundView(vm: vm).id(PrincipalCategory.playground).transition(.move(edge: .leading))
+        case .document: DocumentView().id(PrincipalCategory.document).transition(.move(edge: .trailing))
         }
     }
 
     var body: some View {
         selectedView.toolbar {
-            Toolbar(
-                selection: $toolbarSelection,
-                logLimit: Binding(
-                    get: { vm.logLimit },
-                    set: vm.setLogLimit
-                ),
-                onClear: vm.clearEventHistory
-            )
+            PrincipalToolbar(selection: $principalCategory)
         }
     }
 }

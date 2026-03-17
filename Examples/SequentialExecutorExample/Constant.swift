@@ -9,6 +9,6 @@ import Foundation
 
 enum Constant {
     static let windowWidth: CGFloat = 800
-    static let windowHeight: CGFloat = 620
+    static let windowHeight: CGFloat = 688
     static let eventWidth: CGFloat = windowWidth * 0.5
 }
