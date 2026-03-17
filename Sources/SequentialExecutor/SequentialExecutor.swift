@@ -438,8 +438,6 @@ private extension UUID {
 
     /// Returns the current Unix timestamp in milliseconds.
     private static func unixMilliseconds() -> UInt64 {
-        var timestamp = timespec()
-        clock_gettime(CLOCK_REALTIME, &timestamp)
-        return UInt64(timestamp.tv_sec) * 1000 + UInt64(timestamp.tv_nsec) / 1_000_000
+        UInt64(Date().timeIntervalSince1970 * 1000)
     }
 }
