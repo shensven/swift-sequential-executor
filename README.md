@@ -59,7 +59,7 @@ import SequentialExecutor
 let executor = SequentialExecutor(
     execute: { context in
         print("run", context.executionID, context.source)
-        try await Task.sleep(for: .seconds(1))
+        try await doWork()
     },
     eventHandler: { event in
         print(event.emittedAt, event.kind)
@@ -69,6 +69,71 @@ let executor = SequentialExecutor(
 await executor.updatePolicy(.init(runLoop: .interval(.seconds(5))))
 await executor.executeNow()
 ```
+
+## Initializer Configuration
+
+| Configuration | Role | Callback Input |
+| --- | --- | --- |
+| `execute` | The work closure. `SequentialExecutor` calls it once for each started execution and passes the current execution context. | A `context` value with metadata for the current execution, such as `executionID` and `source`. |
+| `eventHandler` | The lifecycle observer. It receives ordered execution events so you can log, monitor, or update external state. | An `event` value that describes a lifecycle change, including `emittedAt`, `executionID`, `source`, and `kind`. |
+
+If you do not need the `execute` initializer parameter to receive a `context` value, you can also use the convenience initializer:
+
+```swift
+let executor = SequentialExecutor(
+    execute: {
+        try await doWork()
+    },
+    eventHandler: { event in
+        print(event.kind)
+    }
+)
+```
+
+### Policy
+
+| API | Meaning |
+| --- | --- |
+| `Policy(runLoop: .disabled)` | Disables the scheduled loop. No interval-based execution will be started. |
+| `Policy(runLoop: .interval(duration))` | Enables the scheduled loop and waits `duration` between executions. |
+
+Notes:
+
+- `updatePolicy(_:)` is the only public API that changes scheduled-loop behavior.
+- `duration` must be greater than zero.
+
+### Execution Context
+
+| Field | Meaning |
+| --- | --- |
+| `executionID` | The unique identifier for the current execution. It matches the corresponding execution lifecycle events. |
+| `source` | What triggered this execution: either `executeNow(requestID:)` or `scheduledLoop(loopID:)`. |
+
+### Event Cases
+
+| `event.kind` | Meaning |
+| --- | --- |
+| `requested(requestID:)` | A preemptive immediate execution was requested through `executeNow()`. |
+| `executionStarted(executionID:source:)` | A single execution started, and `execute(context)` is about to be awaited. |
+| `executionFinished(executionID:source:)` | A single execution completed successfully. |
+| `executionCancelled(executionID:source:)` | A single execution was cancelled. |
+| `executionFailed(executionID:source:error:)` | A single execution failed with an error. |
+| `policyUpdated(previous:new:)` | The executor policy was updated. |
+| `loopStarted(loopID:)` | A new scheduled loop started. |
+| `loopStopped(loopID:reason:)` | The current scheduled loop was asked to stop. |
+| `loopExited(loopID:)` | The scheduled loop fully exited. |
+| `waitStarted(loopID:interval:)` | The loop started waiting for the next interval. |
+| `waitCancelled(loopID:)` | The current loop wait was cancelled. |
+| `waitFailed(loopID:error:)` | The current loop wait failed with an error. |
+| `intervalElapsed(loopID:)` | The configured interval elapsed and the loop can proceed to schedule work. |
+
+### Loop Stop Reasons
+
+| `reason` | Meaning |
+| --- | --- |
+| `executeNowRequested` | The loop was stopped because `executeNow()` requested a preemptive immediate execution. |
+| `policyDisabled` | The loop was stopped because the current policy disabled scheduled execution. |
+| `policyUpdated` | The loop was stopped so a changed policy could restart scheduling from a clean state. |
 
 ## Behavior
 

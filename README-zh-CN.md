@@ -24,7 +24,7 @@ Apple 的 [`Timer.scheduledTimer(...)`](<https://developer.apple.com/documentati
 >
 > 其他细节都被封装在内部 ;-)
 
-## Installation
+## 安装
 
 ### Swift Package Manager
 
@@ -51,7 +51,7 @@ targets: [
 ]
 ```
 
-## Quick Start
+## 快速开始
 
 ```swift
 import SequentialExecutor
@@ -59,7 +59,7 @@ import SequentialExecutor
 let executor = SequentialExecutor(
     execute: { context in
         print("run", context.executionID, context.source)
-        try await Task.sleep(for: .seconds(1))
+        try await doWork()
     },
     eventHandler: { event in
         print(event.emittedAt, event.kind)
@@ -69,6 +69,74 @@ let executor = SequentialExecutor(
 await executor.updatePolicy(.init(runLoop: .interval(.seconds(5))))
 await executor.executeNow()
 ```
+
+## 初始化器参数说明
+
+| 参数 | 作用 | 回调内容 |
+| --- | --- | --- |
+| `execute` | 真正执行业务工作的闭包。`SequentialExecutor` 每次启动一次 execution 时，都会带着当前 execution context 调用它一次。 | 一个 `context` 参数，包含当前执行的元数据，例如 `executionID` 和 `source`。 |
+| `eventHandler` | 生命周期事件观察器。它会按顺序接收执行事件，方便你做日志、监控或同步外部状态。 | 一个 `event` 参数，用来描述一次生命周期变化，包含 `emittedAt`、`executionID`、`source` 和 `kind`。 |
+
+如果你不需要让初始化器里的 `execute` 参数接收 `context` 值，也可以使用一个更简洁的便利初始化器：
+
+```swift
+let executor = SequentialExecutor(
+    execute: {
+        try await doWork()
+    },
+    eventHandler: { event in
+        print(event.kind)
+    }
+)
+```
+
+### 调度策略
+
+这里列出的是 `SequentialExecutor.Policy` 的公开配置方式。
+
+| API | 含义 | 说明 |
+| --- | --- | --- |
+| `Policy(runLoop: .disabled)` | 关闭调度循环，不会再启动基于 interval 的执行。 | 通过 `updatePolicy(_:)` 应用。 |
+| `Policy(runLoop: .interval(duration))` | 开启调度循环，并在每次执行之间等待 `duration`。 | 通过 `updatePolicy(_:)` 应用，且 `duration` 必须大于 0。 |
+
+### 执行上下文
+
+这里列出的是 `SequentialExecutor.ExecutionContext` 的字段。
+
+| 字段 | 含义 |
+| --- | --- |
+| `executionID` | 当前这次 execution 的唯一标识。它会和对应的 execution 生命周期事件保持一致。 |
+| `source` | 触发这次 execution 的来源：要么是 `executeNow(requestID:)`，要么是 `scheduledLoop(loopID:)`。 |
+
+### 事件枚举
+
+这里列出的是 `SequentialExecutor.Event.Kind` 的所有 case。
+
+| `event.kind` | 含义 |
+| --- | --- |
+| `requested(requestID:)` | 通过 `executeNow()` 发起了一次抢占式立即执行请求。 |
+| `executionStarted(executionID:source:)` | 一次 execution 已经开始，且即将进入 `execute(context)`。 |
+| `executionFinished(executionID:source:)` | 一次 execution 成功完成。 |
+| `executionCancelled(executionID:source:)` | 一次 execution 被取消。 |
+| `executionFailed(executionID:source:error:)` | 一次 execution 因错误失败。 |
+| `policyUpdated(previous:new:)` | executor 的策略配置已更新。 |
+| `loopStarted(loopID:)` | 一个新的调度循环已经启动。 |
+| `loopStopped(loopID:reason:)` | 当前调度循环被请求停止。 |
+| `loopExited(loopID:)` | 当前调度循环已经完全退出。 |
+| `waitStarted(loopID:interval:)` | 调度循环开始等待下一个 interval。 |
+| `waitCancelled(loopID:)` | 当前等待被取消。 |
+| `waitFailed(loopID:error:)` | 当前等待因错误失败。 |
+| `intervalElapsed(loopID:)` | 配置的 interval 已到期，调度循环可以继续安排执行。 |
+
+### 循环停止原因
+
+这里列出的是 `SequentialExecutor.LoopStopReason` 的所有 case。
+
+| `reason` | 含义 |
+| --- | --- |
+| `executeNowRequested` | 调度循环因为 `executeNow()` 发起抢占式立即执行而被停止。 |
+| `policyDisabled` | 调度循环因为当前策略关闭了 scheduled execution 而被停止。 |
+| `policyUpdated` | 调度循环因为策略变更，需要从干净状态重新启动调度而被停止。 |
 
 ## 行为说明
 
