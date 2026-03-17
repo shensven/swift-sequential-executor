@@ -1,5 +1,7 @@
 # Swift Sequential Executor
 
+[![Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests.yml/badge.svg?branch=dev)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests.yml)
+
 English｜[简体中文](README-zh-CN.md)
 
 ## Why?
