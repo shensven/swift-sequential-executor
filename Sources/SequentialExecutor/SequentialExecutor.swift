@@ -145,6 +145,7 @@ public actor SequentialExecutor {
 
     private let execute: @Sendable (ExecutionContext) async throws -> Void
     private let eventHandler: ((Event) -> Void)?
+    private let clock = ContinuousClock()
 
     private var loopTask: Task<Void, Never>?
     private var loopTaskID: UUID?
@@ -280,7 +281,7 @@ private extension SequentialExecutor {
         guard let interval = loopPolicy.interval else { return false }
         do {
             emit(.waitStarted(loopID: loopID, interval: interval))
-            try await Task.sleep(for: interval)
+            try await clock.sleep(for: interval)
             try Task.checkCancellation()
         } catch is CancellationError {
             emit(.waitCancelled(loopID: loopID))
