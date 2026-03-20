@@ -166,6 +166,10 @@ public actor SequentialExecutor {
     ///     The executor passes the current execution context, including the
     ///     execution identifier and the trigger source. The executor emits the
     ///     matching `executionStarted` event immediately before awaiting this closure.
+    ///     This closure is expected to cooperate with Swift Concurrency cancellation.
+    ///     When `executeNow()` needs to replace an in-flight execution, it cancels the
+    ///     current task and then waits for this closure to return. If the closure does
+    ///     not observe cancellation, the replacement execution cannot start promptly.
     ///   - eventHandler: An optional observer for lifecycle events.
     ///     The executor invokes this callback synchronously on its coordination path
     ///     in the same order the events are emitted. Keep the handler lightweight and
@@ -214,7 +218,9 @@ public extension SequentialExecutor {
     /// it is stopped first. If another execution is already running, it is cancelled
     /// and replaced by the new one. If multiple callers race to invoke `executeNow()`,
     /// only the latest pending request is guaranteed to proceed after cancellation
-    /// coordination completes.
+    /// coordination completes. Cancellation remains cooperative: this method requests
+    /// cancellation of the in-flight execution and waits for it to return; it does not
+    /// forcibly terminate non-cooperative work.
     func executeNow() async {
         await executeImmediately()
     }
