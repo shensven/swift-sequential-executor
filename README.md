@@ -1,7 +1,7 @@
 # Swift Sequential Executor
 
-[![Swift](https://img.shields.io/badge/Swift-6.0_|_6.1_|_6.2-orange)](https://img.shields.io/badge/Swift-6.0_6.1_6.2-Orange?style=flat-square)
-[![Platforms](https://img.shields.io/badge/Platforms-macOS_|_iOS_|_tvOS_|_watchOS_|_visionOS_|_Linux-yellowgreen)](https://img.shields.io/badge/Platforms-macOS_|_iOS_|_tvOS_|_watchOS_|_visionOS_|_Linux-yellowgreen)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fshensven%2Fswift-sequential-executor%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/shensven/swift-sequential-executor)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fshensven%2Fswift-sequential-executor%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/shensven/swift-sequential-executor)
 
 English｜[简体中文](README-zh-CN.md)
 
