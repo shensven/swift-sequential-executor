@@ -22,12 +22,12 @@ In practice, using `Timer` for this kind of async coordination usually leaves th
 ## What SequentialExecutor Solves
 
 - wraps that coordination in one actor-backed type
-- keeps execution semantics explicit through `updatePolicy(_:)` and `executeNow()`
+- keeps execution semantics explicit through `updatePolicy(_:)` and `runNow()`
 - exposes ordered lifecycle events for integration with logging, monitoring, or UI
 - keeps the public API intentionally small while leaving runtime details internal
 
 > [!TIP]
-> The core API stays focused on `execute`, `eventHandler`, `events()`, `updatePolicy(_:)`, and `executeNow()`.
+> The core API stays focused on `execute`, `eventHandler`, `events()`, `updatePolicy(_:)`, and `runNow()`.
 >
 > Everything else stays internal ;-)
 
@@ -82,11 +82,11 @@ let executor = SequentialExecutor(
 )
 
 await executor.updatePolicy(.init(runLoop: .interval(.seconds(5))))
-await executor.executeNow()
+await executor.runNow()
 
 ```
 
-Run this from any async context, such as app startup, an async test, or a `Task`. `updatePolicy(_:)` enables interval-based execution, and `executeNow()` requests an immediate run.
+Run this from any async context, such as app startup, an async test, or a `Task`. `updatePolicy(_:)` enables interval-based execution, and `runNow()` requests an immediate run.
 
 If you want to debug the fuller runtime behavior, see [Example App](#example-app).
 
@@ -105,7 +105,7 @@ let eventTask = Task {
     }
 }
 
-await executor.executeNow()
+await executor.runNow()
 eventTask.cancel()
 ```
 
@@ -125,7 +125,7 @@ If you only need a timer to fire a simple callback later, and async work coordin
 At a high level, `SequentialExecutor` follows three rules:
 
 - only one execution runs at a time
-- `executeNow()` requests an immediate run, but does not forcibly interrupt in-flight work
+- `runNow()` requests an immediate run, but does not forcibly interrupt in-flight work
 - the scheduled loop resumes only if the current policy still enables it
 
 If you only need the integration surface, this summary is enough. Expand the sections below if you want the fuller runtime model.
@@ -138,7 +138,7 @@ The visible runtime model can be described with 4 states:
 - `Idle`: the scheduled loop is disabled and no execution is in progress
 - `Waiting`: the scheduled loop is enabled and is waiting for the next interval
 - `ScheduledExecution`: an execution started because the configured interval elapsed
-- `ImmediateExecution`: an execution started because `executeNow()` requested an immediate run
+- `ImmediateExecution`: an execution started because `runNow()` requested an immediate run
 
 ```mermaid
 stateDiagram-v2
@@ -152,11 +152,11 @@ stateDiagram-v2
     ScheduledExecution: execute(context)<br/>source = scheduledLoop
     ScheduledExecution --> Waiting: executionFinished / Cancelled / Failed
 
-    Idle --> ImmediateExecution: executeNow()
-    Waiting --> ImmediateExecution: executeNow()<br/>stop loop first
-    ScheduledExecution --> ImmediateExecution: executeNow()<br/>cancel current execution first
+    Idle --> ImmediateExecution: runNow()
+    Waiting --> ImmediateExecution: runNow()<br/>stop loop first
+    ScheduledExecution --> ImmediateExecution: runNow()<br/>cancel current execution first
 
-    ImmediateExecution: execute(context)<br/>source = executeNow
+    ImmediateExecution: execute(context)<br/>source = runNow
     ImmediateExecution --> Waiting: executionFinished / Cancelled / Failed<br/>policy still interval
     ImmediateExecution --> Idle: executionFinished / Cancelled / Failed<br/>policy disabled
 
@@ -169,14 +169,14 @@ stateDiagram-v2
 <details>
 <summary>Replacement Flow</summary>
 
-`executeNow()` never stacks executions in parallel. Instead, it coordinates a replacement run and waits for cancellation cooperation when work is already in flight.
+`runNow()` never stacks executions in parallel. Instead, it coordinates a replacement run and waits for cancellation cooperation when work is already in flight.
 
 More concretely:
 
 - if the executor is currently waiting for the next interval, that wait is cancelled first
 - if an execution is already in progress, the executor requests cancellation and waits for that execution to return
 - the replacement execution starts only after the previous execution has actually finished
-- if several `executeNow()` calls arrive while that cancellation coordination is still in progress, older pending requests yield to the newest one
+- if several `runNow()` calls arrive while that cancellation coordination is still in progress, older pending requests yield to the newest one
 - every immediate request is still recorded separately, but not every request is guaranteed to reach a started execution
 - if the in-flight work does not cooperate with cancellation, the replacement execution may be delayed
 - once the immediate execution finishes, the scheduled loop resumes only if the current policy still enables it
@@ -194,11 +194,11 @@ sequenceDiagram
     Executor-->>Observer: loopStarted
     Executor-->>Observer: waitStarted
 
-    Caller->>Executor: executeNow()
+    Caller->>Executor: runNow()
     Executor-->>Observer: requested
-    Executor-->>Observer: loopStopped(executeNowRequested)
+    Executor-->>Observer: loopStopped(runNowRequested)
     Executor-->>Observer: waitCancelled
-    Executor-->>Observer: executionStarted(source: executeNow)
+    Executor-->>Observer: executionStarted(source: runNow)
     Note over Executor: await execute(context)
 
     alt execute returns
@@ -277,7 +277,7 @@ Reference fields for `SequentialExecutor.ExecutionContext`.
 | Field | Meaning |
 | --- | --- |
 | `executionID` | The unique identifier for the current execution. It matches the corresponding execution lifecycle events. |
-| `source` | What triggered this execution: either `executeNow(requestID:)` or `scheduledLoop(loopID:)`. |
+| `source` | What triggered this execution: either `runNow(requestID:)` or `scheduledLoop(loopID:)`. |
 
 ### Event Cases
 
@@ -285,7 +285,7 @@ Reference cases for `SequentialExecutor.Event.Kind`.
 
 | `event.kind` | Meaning |
 | --- | --- |
-| `requested(requestID:)` | An immediate execution was requested through `executeNow()`. |
+| `requested(requestID:)` | An immediate execution was requested through `runNow()`. |
 | `executionStarted(executionID:source:)` | A single execution started, and `execute(context)` is about to be awaited. |
 | `executionFinished(executionID:source:)` | A single execution completed successfully. |
 | `executionCancelled(executionID:source:)` | A single execution was cancelled. |
@@ -305,6 +305,6 @@ Reference cases for `SequentialExecutor.LoopStopReason`.
 
 | `reason` | Meaning |
 | --- | --- |
-| `executeNowRequested` | The loop was stopped because `executeNow()` requested an immediate execution. |
+| `runNowRequested` | The loop was stopped because `runNow()` requested an immediate execution. |
 | `policyDisabled` | The loop was stopped because the current policy disabled scheduled execution. |
 | `policyUpdated` | The loop was stopped so a changed policy could restart scheduling from a clean state. |

@@ -290,40 +290,40 @@ private extension SequentialExecutor.Event {
 
 private extension SequentialExecutor.Event {
     var isImmediateExecutionStarted: Bool {
-        if case .executionStarted(_, .executeNow(requestID: _)) = kind { return true }
+        if case .executionStarted(_, .runNow(requestID: _)) = kind { return true }
         return false
     }
 
     var isImmediateExecutionCancelled: Bool {
-        if case .executionCancelled(_, .executeNow(requestID: _)) = kind { return true }
+        if case .executionCancelled(_, .runNow(requestID: _)) = kind { return true }
         return false
     }
 
     var isImmediateExecutionFinished: Bool {
-        if case .executionFinished(_, .executeNow(requestID: _)) = kind { return true }
+        if case .executionFinished(_, .runNow(requestID: _)) = kind { return true }
         return false
     }
 
     var isImmediateExecutionFailed: Bool {
-        if case .executionFailed(_, .executeNow(requestID: _), _) = kind { return true }
+        if case .executionFailed(_, .runNow(requestID: _), _) = kind { return true }
         return false
     }
 }
 
-// MARK: executeNow() Basics
+// MARK: runNow() Basics
 
-@Test func executeNow_runsTheExecuteClosureOnce() async {
+@Test func runNow_runsTheExecuteClosureOnce() async {
     let invocations = InvocationCounter()
     let executor = SequentialExecutor {
         _ = invocations.next()
     }
 
-    await executor.executeNow()
+    await executor.runNow()
 
     #expect(invocations.value() == 1)
 }
 
-@Test func executeNow_passesExecutionContextMatchingLifecycleEvents() async {
+@Test func runNow_passesExecutionContextMatchingLifecycleEvents() async {
     let contexts = ExecutionContextRecorder()
     let events = EventRecorder()
     let executor = SequentialExecutor(
@@ -335,7 +335,7 @@ private extension SequentialExecutor.Event {
         }
     )
 
-    await executor.executeNow()
+    await executor.runNow()
 
     let capturedContexts = contexts.snapshot()
     let capturedEvents = events.snapshot()
@@ -361,13 +361,13 @@ private extension SequentialExecutor.Event {
     }
     let eventTimes = capturedEvents.map(\.emittedAt)
 
-    #expect(context.source == .executeNow(requestID: 1))
+    #expect(context.source == .runNow(requestID: 1))
     #expect(startedEvent)
     #expect(finishedEvent)
     #expect(eventTimes == eventTimes.sorted())
 }
 
-@Test func executeNow_emitsExecutionFailedWhenWorkThrows() async {
+@Test func runNow_emitsExecutionFailedWhenWorkThrows() async {
     let events = EventRecorder()
     let executor = SequentialExecutor(
         execute: {
@@ -378,7 +378,7 @@ private extension SequentialExecutor.Event {
         }
     )
 
-    await executor.executeNow()
+    await executor.runNow()
 
     #expect(events.snapshot().contains(where: { $0.isImmediateExecutionFailed }))
 }
@@ -389,7 +389,7 @@ private extension SequentialExecutor.Event {
     let stream = await executor.events()
     let collector = recordEvents(from: stream, into: events)
 
-    await executor.executeNow()
+    await executor.runNow()
 
     let snapshot = await events.wait { events in
         events.contains(where: { $0.isRequested })
@@ -414,7 +414,7 @@ private extension SequentialExecutor.Event {
     let stream = await executor.events()
     let collector = recordEvents(from: stream, into: streamEvents)
 
-    await executor.executeNow()
+    await executor.runNow()
 
     let callbackSnapshot = await callbackEvents.wait { events in
         events.contains(where: { $0.isImmediateExecutionFinished })
@@ -437,9 +437,9 @@ private extension SequentialExecutor.Event {
     }
 }
 
-// MARK: executeNow() Concurrency
+// MARK: runNow() Concurrency
 
-@Test func concurrentExecuteNow_requestsCancelOlderImmediateExecution() async {
+@Test func concurrentRunNow_requestsCancelOlderImmediateExecution() async {
     let invocations = InvocationCounter()
     let events = EventRecorder()
     let executor = SequentialExecutor(
@@ -455,7 +455,7 @@ private extension SequentialExecutor.Event {
     )
 
     let firstRequest = Task {
-        await executor.executeNow()
+        await executor.runNow()
     }
 
     #expect(await events.wait { events in
@@ -463,7 +463,7 @@ private extension SequentialExecutor.Event {
     } != nil)
 
     let secondRequest = Task {
-        await executor.executeNow()
+        await executor.runNow()
     }
 
     await firstRequest.value
@@ -482,7 +482,7 @@ private extension SequentialExecutor.Event {
     #expect(finishedCount == 1)
 }
 
-@Test func multipleConcurrentExecuteNow_onlyLatestActuallyRuns() async {
+@Test func multipleConcurrentRunNow_onlyLatestActuallyRuns() async {
     let probe = ExecutionProbe()
     let events = EventRecorder()
     let executor = SequentialExecutor(
@@ -496,14 +496,14 @@ private extension SequentialExecutor.Event {
         }
     )
 
-    let first = Task { await executor.executeNow() }
+    let first = Task { await executor.runNow() }
 
     #expect(await events.wait { events in
         events.contains(where: { $0.isImmediateExecutionStarted })
     } != nil)
 
-    let second = Task { await executor.executeNow() }
-    let third = Task { await executor.executeNow() }
+    let second = Task { await executor.runNow() }
+    let third = Task { await executor.runNow() }
 
     await first.value
     await second.value
@@ -516,15 +516,15 @@ private extension SequentialExecutor.Event {
         return nil
     }
     let startedIDs = eventSnapshot.compactMap { event -> UInt? in
-        if case let .executionStarted(_, .executeNow(requestID)) = event.kind { return requestID }
+        if case let .executionStarted(_, .runNow(requestID)) = event.kind { return requestID }
         return nil
     }
     let cancelledIDs = eventSnapshot.compactMap { event -> UInt? in
-        if case let .executionCancelled(_, .executeNow(requestID)) = event.kind { return requestID }
+        if case let .executionCancelled(_, .runNow(requestID)) = event.kind { return requestID }
         return nil
     }
     let finishedIDs = eventSnapshot.compactMap { event -> UInt? in
-        if case let .executionFinished(_, .executeNow(requestID)) = event.kind { return requestID }
+        if case let .executionFinished(_, .runNow(requestID)) = event.kind { return requestID }
         return nil
     }
 
@@ -741,7 +741,7 @@ private extension SequentialExecutor.Event {
 
 // MARK: Scheduled and Immediate Interaction
 
-@Test func executeNow_cancelsInFlightScheduledExecution_beforeRunningImmediateExecution() async {
+@Test func runNow_cancelsInFlightScheduledExecution_beforeRunningImmediateExecution() async {
     let invocations = InvocationCounter()
     let events = EventRecorder()
     let executor = SequentialExecutor(
@@ -762,7 +762,7 @@ private extension SequentialExecutor.Event {
         events.contains(where: { $0.isScheduledExecutionStarted })
     } != nil)
 
-    await executor.executeNow()
+    await executor.runNow()
     await executor.updatePolicy(.init())
 
     let snapshot = events.snapshot()
@@ -788,7 +788,7 @@ private extension SequentialExecutor.Event {
     }
 }
 
-@Test func scheduledLoop_resumesAfterExecuteNow() async {
+@Test func scheduledLoop_resumesAfterRunNow() async {
     let events = EventRecorder()
     let executor = SequentialExecutor(
         execute: {},
@@ -803,7 +803,7 @@ private extension SequentialExecutor.Event {
         events.contains(where: { $0.isWaitStarted })
     } != nil)
 
-    await executor.executeNow()
+    await executor.runNow()
 
     let snapshot = await events.wait { events in
         let loopStartCount = events.filter(\.isLoopStarted).count

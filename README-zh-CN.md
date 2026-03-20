@@ -22,12 +22,12 @@ Apple 的 [Run Loop 指南](https://developer.apple.com/library/archive/document
 ## SequentialExecutor 解决了什么
 
 - 把这些协调逻辑收敛到一个 actor 类型里
-- 用 `updatePolicy(_:)` 和 `executeNow()` 明确暴露调度入口
+- 用 `updatePolicy(_:)` 和 `runNow()` 明确暴露调度入口
 - 按顺序发出生命周期事件，便于日志、监控和 UI 同步
 - 保持公开接口尽量小，把运行时细节留在内部实现里
 
 > [!TIP]
-> 核心接口只聚焦在 `execute`、`eventHandler`、`events()`、`updatePolicy(_:)` 和 `executeNow()`
+> 核心接口只聚焦在 `execute`、`eventHandler`、`events()`、`updatePolicy(_:)` 和 `runNow()`
 >
 > 其他细节都被封装在内部 ;-)
 
@@ -82,11 +82,11 @@ let executor = SequentialExecutor(
 )
 
 await executor.updatePolicy(.init(runLoop: .interval(.seconds(5))))
-await executor.executeNow()
+await executor.runNow()
 
 ```
 
-这段代码可以放在任意异步上下文中运行，例如应用启动流程、异步测试，或者一个 `Task` 里。`updatePolicy(_:)` 用来开启固定间隔调度，`executeNow()` 用来发起一次立即执行。
+这段代码可以放在任意异步上下文中运行，例如应用启动流程、异步测试，或者一个 `Task` 里。`updatePolicy(_:)` 用来开启固定间隔调度，`runNow()` 用来发起一次立即执行。
 
 如果你想调试更完整的运行行为，可以继续查看[示例应用](#示例应用)。
 
@@ -105,7 +105,7 @@ let eventTask = Task {
     }
 }
 
-await executor.executeNow()
+await executor.runNow()
 eventTask.cancel()
 ```
 
@@ -125,7 +125,7 @@ eventTask.cancel()
 从高层语义上看，`SequentialExecutor` 的行为可以先概括为 3 点：
 
 - 任意时刻都只会有一次执行处于运行中
-- `executeNow()` 会发起一次立即执行，但不会粗暴中断正在运行的任务
+- `runNow()` 会发起一次立即执行，但不会粗暴中断正在运行的任务
 - 一次立即执行结束后，调度循环是否恢复，取决于当前策略是否仍然启用
 
 如果你只关心如何接入，这里已经足够。想看更完整的运行时模型，可以展开下面的内容。
@@ -138,7 +138,7 @@ eventTask.cancel()
 - `Idle`：调度循环已关闭，当前没有任务在执行
 - `Waiting`：调度循环已开启，正在等待下一个间隔到来
 - `ScheduledExecution`：因为间隔到期而启动的一次执行
-- `ImmediateExecution`：因为 `executeNow()` 请求立即执行而启动的一次执行
+- `ImmediateExecution`：因为 `runNow()` 请求立即执行而启动的一次执行
 
 ```mermaid
 stateDiagram-v2
@@ -152,11 +152,11 @@ stateDiagram-v2
     ScheduledExecution: execute(context)<br/>source = scheduledLoop
     ScheduledExecution --> Waiting: executionFinished / Cancelled / Failed
 
-    Idle --> ImmediateExecution: executeNow()
-    Waiting --> ImmediateExecution: executeNow()<br/>先停止循环
-    ScheduledExecution --> ImmediateExecution: executeNow()<br/>先取消当前执行
+    Idle --> ImmediateExecution: runNow()
+    Waiting --> ImmediateExecution: runNow()<br/>先停止循环
+    ScheduledExecution --> ImmediateExecution: runNow()<br/>先取消当前执行
 
-    ImmediateExecution: execute(context)<br/>source = executeNow
+    ImmediateExecution: execute(context)<br/>source = runNow
     ImmediateExecution --> Waiting: executionFinished / Cancelled / Failed<br/>策略仍为固定间隔模式
     ImmediateExecution --> Idle: executionFinished / Cancelled / Failed<br/>策略已禁用
 
@@ -169,14 +169,14 @@ stateDiagram-v2
 <details>
 <summary>替换执行流程</summary>
 
-`executeNow()` 不会并行叠加执行。它会协调一次替换执行；如果当前已经有任务在运行，就先等待取消协作完成。
+`runNow()` 不会并行叠加执行。它会协调一次替换执行；如果当前已经有任务在运行，就先等待取消协作完成。
 
 更具体地说：
 
 - 如果当前正处于等待下一个间隔的状态，那么这次等待会先被取消
 - 如果当前已经有任务在执行，执行器会先请求取消该任务，并等待它返回
 - 只有前一次执行真正结束后，替代执行才会开始
-- 如果在这段取消协调尚未完成时又连续到来多个 `executeNow()` 调用，较早的待处理请求会让位给最新的那个请求
+- 如果在这段取消协调尚未完成时又连续到来多个 `runNow()` 调用，较早的待处理请求会让位给最新的那个请求
 - 每一次立即执行请求仍然都会被单独记录下来，但并不是每个请求都一定会真正启动一次执行
 - 如果当前任务没有正确配合 cancellation，替代执行的开始时间就可能被延后
 - 这次立即执行结束后，只有在当前策略仍然允许的前提下，调度循环才会恢复等待
@@ -194,11 +194,11 @@ sequenceDiagram
     Executor-->>Observer: loopStarted
     Executor-->>Observer: waitStarted
 
-    Caller->>Executor: executeNow()
+    Caller->>Executor: runNow()
     Executor-->>Observer: requested
-    Executor-->>Observer: loopStopped(executeNowRequested)
+    Executor-->>Observer: loopStopped(runNowRequested)
     Executor-->>Observer: waitCancelled
-    Executor-->>Observer: executionStarted(source: executeNow)
+    Executor-->>Observer: executionStarted(source: runNow)
     Note over Executor: await execute(context)
 
     alt execute 正常返回
@@ -274,7 +274,7 @@ let executor = SequentialExecutor(
 | 字段 | 含义 |
 | --- | --- |
 | `executionID` | 当前这次执行的唯一标识。它会和对应的执行生命周期事件保持一致。 |
-| `source` | 触发这次执行的来源：要么是 `executeNow(requestID:)`，要么是 `scheduledLoop(loopID:)`。 |
+| `source` | 触发这次执行的来源：要么是 `runNow(requestID:)`，要么是 `scheduledLoop(loopID:)`。 |
 
 ### 事件枚举
 
@@ -282,7 +282,7 @@ let executor = SequentialExecutor(
 
 | `event.kind` | 含义 |
 | --- | --- |
-| `requested(requestID:)` | 通过 `executeNow()` 发起了一次立即执行请求。 |
+| `requested(requestID:)` | 通过 `runNow()` 发起了一次立即执行请求。 |
 | `executionStarted(executionID:source:)` | 一次执行已经开始，且即将进入 `execute(context)`。 |
 | `executionFinished(executionID:source:)` | 一次执行成功完成。 |
 | `executionCancelled(executionID:source:)` | 一次执行被取消。 |
@@ -302,6 +302,6 @@ let executor = SequentialExecutor(
 
 | `reason` | 含义 |
 | --- | --- |
-| `executeNowRequested` | 调度循环因为 `executeNow()` 发起立即执行而被停止。 |
+| `runNowRequested` | 调度循环因为 `runNow()` 发起立即执行而被停止。 |
 | `policyDisabled` | 调度循环因为当前策略关闭了定时执行而被停止。 |
 | `policyUpdated` | 调度循环因为策略变更，需要从干净状态重新启动调度而被停止。 |

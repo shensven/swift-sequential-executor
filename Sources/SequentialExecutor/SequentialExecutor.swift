@@ -10,7 +10,7 @@ import Foundation
 /// A scheduled loop waits for the configured interval, executes once, waits again,
 /// and never overlaps with another execution.
 ///
-/// `executeNow()` has higher priority than the scheduled loop. It stops the current
+/// `runNow()` has higher priority than the scheduled loop. It stops the current
 /// loop, cancels any in-flight execution, runs a new immediate execution, and then
 /// lets the loop resume from a clean state.
 ///
@@ -18,7 +18,7 @@ import Foundation
 /// - `execute` defines the unit of work.
 /// - `eventHandler` observes lifecycle events in emission order.
 /// - `updatePolicy(_:)` controls the scheduled loop.
-/// - `executeNow()` requests a higher-priority immediate execution.
+/// - `runNow()` requests a higher-priority immediate execution.
 public actor SequentialExecutor {
     /// Reports the executor's observable lifecycle.
     ///
@@ -77,8 +77,8 @@ public actor SequentialExecutor {
 
     /// Describes what triggered an execution.
     public enum ExecutionSource: Sendable, Equatable {
-        /// Identifies an explicit `executeNow()` request.
-        case executeNow(requestID: UInt)
+        /// Identifies an explicit `runNow()` request.
+        case runNow(requestID: UInt)
         /// Identifies a scheduled loop tick.
         case scheduledLoop(loopID: UUID)
     }
@@ -103,7 +103,7 @@ public actor SequentialExecutor {
     /// Explains why a scheduled loop stopped.
     public enum LoopStopReason: Sendable, Equatable {
         /// Indicates that an immediate execution request stopped the loop.
-        case executeNowRequested
+        case runNowRequested
         /// Indicates that the loop policy disabled the loop.
         case policyDisabled
         /// Indicates that the loop policy changed and the loop must restart.
@@ -168,7 +168,7 @@ public actor SequentialExecutor {
     ///     execution identifier and the trigger source. The executor emits the
     ///     matching `executionStarted` event immediately before awaiting this closure.
     ///     This closure is expected to cooperate with Swift Concurrency cancellation.
-    ///     When `executeNow()` needs to replace an in-flight execution, it cancels the
+    ///     When `runNow()` needs to replace an in-flight execution, it cancels the
     ///     current task and then waits for this closure to return. If the closure does
     ///     not observe cancellation, the replacement execution cannot start promptly.
     ///   - eventHandler: An optional observer for lifecycle events.
@@ -218,13 +218,13 @@ public extension SequentialExecutor {
     ///
     /// Immediate execution has priority over the scheduled loop. If a loop is active,
     /// it is stopped first. If another execution is already running, it is cancelled
-    /// and replaced by the new one. If multiple callers race to invoke `executeNow()`,
+    /// and replaced by the new one. If multiple callers race to invoke `runNow()`,
     /// only the latest pending request is guaranteed to proceed after cancellation
     /// coordination completes. Cancellation remains cooperative: this method requests
     /// cancellation of the in-flight execution and waits for it to return; it does not
     /// forcibly terminate non-cooperative work.
-    func executeNow() async {
-        await executeImmediately()
+    func runNow() async {
+        await runImmediately()
     }
 
     /// Returns an async sequence view of the executor lifecycle events.
@@ -286,7 +286,7 @@ private extension SequentialExecutor {
         }
 
         guard pendingImmediateExecutionCount == 0 else {
-            stopScheduledExecutionLoop(reason: .executeNowRequested)
+            stopScheduledExecutionLoop(reason: .runNowRequested)
             return
         }
 
@@ -342,7 +342,7 @@ private extension SequentialExecutor {
 // MARK: Immediate Request Coordination
 
 private extension SequentialExecutor {
-    func executeImmediately() async {
+    func runImmediately() async {
         latestImmediateExecutionRequestID &+= 1
         let requestID = latestImmediateExecutionRequestID
         emit(.requested(requestID: requestID))
@@ -350,10 +350,10 @@ private extension SequentialExecutor {
 
         // Latest request wins. Stop the loop, cancel the current execution if needed,
         // and replace it with a new immediate execution.
-        stopScheduledExecutionLoop(reason: .executeNowRequested)
+        stopScheduledExecutionLoop(reason: .runNowRequested)
         await cancelCurrentExecutionAndWait()
 
-        // After resuming from the suspension point, a newer executeNow() request
+        // After resuming from the suspension point, a newer runNow() request
         // may have already been queued. Only the latest request should proceed;
         // older requests yield to avoid parallel executions.
         guard latestImmediateExecutionRequestID == requestID else {
@@ -361,7 +361,7 @@ private extension SequentialExecutor {
             return
         }
 
-        let task = startExecution(source: .executeNow(requestID: requestID))
+        let task = startExecution(source: .runNow(requestID: requestID))
         await task.value
 
         pendingImmediateExecutionCount -= 1

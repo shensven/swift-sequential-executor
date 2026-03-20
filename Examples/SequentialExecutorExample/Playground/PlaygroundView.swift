@@ -182,7 +182,7 @@ struct PlaygroundView: View {
                         LabeledContent(
                             content: {
                                 HStack(spacing: 8) {
-                                    Button("Execute Now", action: vm.executeNow)
+                                    Button("Run Now", action: vm.runNow)
                                     Button("Fail Now", action: vm.requestFailure).disabled(!vm.isExecuting)
                                 }
                             },

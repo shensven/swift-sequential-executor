@@ -158,11 +158,11 @@ final class ViewModel {
 
     // MARK: - Execution API
 
-    func executeNow() {
+    func runNow() {
         Task { @MainActor [weak self] in
             guard let self else { return }
             await self.applyLatestPolicy()
-            await self.executor.executeNow()
+            await self.executor.runNow()
         }
     }
 
@@ -621,7 +621,7 @@ private extension SequentialExecutor.Policy {
 private extension SequentialExecutor.ExecutionSource {
     var description: String {
         switch self {
-        case let .executeNow(requestID): "executeNow #\(requestID)"
+        case let .runNow(requestID): "runNow #\(requestID)"
         case let .scheduledLoop(loopID): "scheduledLoop \(loopID.shortID)"
         }
     }
@@ -630,7 +630,7 @@ private extension SequentialExecutor.ExecutionSource {
 private extension SequentialExecutor.LoopStopReason {
     var description: String {
         switch self {
-        case .executeNowRequested: "executeNowRequested"
+        case .runNowRequested: "runNowRequested"
         case .policyDisabled: "policyDisabled"
         case .policyUpdated: "policyUpdated"
         }
