@@ -1,7 +1,11 @@
-name: Tests
+name: Apple Tests
 
 on:
   push:
+    branches:
+      - dev
+      - main
+  pull_request:
     branches:
       - dev
 
@@ -21,30 +25,18 @@ jobs:
             os: macos-15
           - swift: "6.2"
             os: macos-14
-          - swift: "6.2"
-            os: ubuntu-24.04
-          - swift: "6.2"
-            os: ubuntu-22.04
 
           # Swift 6.1
           - swift: "6.1"
             os: macos-15
           - swift: "6.1"
             os: macos-14
-          - swift: "6.1"
-            os: ubuntu-24.04
-          - swift: "6.1"
-            os: ubuntu-22.04
 
           # Swift 6.0
           - swift: "6.0"
             os: macos-15
           - swift: "6.0"
             os: macos-14
-          - swift: "6.0"
-            os: ubuntu-24.04
-          - swift: "6.0"
-            os: ubuntu-22.04
 
     steps:
       - name: Checkout

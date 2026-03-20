@@ -1,7 +1,7 @@
 # Swift Sequential Executor
 
 [![Swift](https://img.shields.io/badge/Swift-6.0_|_6.1_|_6.2-orange)](https://img.shields.io/badge/Swift-6.0_6.1_6.2-Orange?style=flat-square)
-[![Platforms](https://img.shields.io/badge/Platforms-macOS_|_iOS_|_tvOS_|_watchOS_|_visionOS-yellowgreen)](https://img.shields.io/badge/Platforms-macOS_|_iOS_|_tvOS_|_watchOS_|_visionOS-yellowgreen)
+[![Platforms](https://img.shields.io/badge/Platforms-macOS_|_iOS_|_tvOS_|_watchOS_|_visionOS_|_Linux-yellowgreen)](https://img.shields.io/badge/Platforms-macOS_|_iOS_|_tvOS_|_watchOS_|_visionOS_|_Linux-yellowgreen)
 
 English｜[简体中文](README-zh-CN.md)
 
@@ -35,7 +35,8 @@ In practice, using `Timer` for this kind of async coordination usually leaves th
 
 | Platform | Swift Version | Installation | Status |
 | --- | --- | --- | --- |
-| iOS 16.0+ / macOS 13.0+ / tvOS 16.0+ / watchOS 9.0+ / visionOS 1.0+ | Swift 6.0+ / Xcode 16.0+ | Swift Package Manager | [![Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests.yml/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests.yml) |
+| macOS 13.0+<br>iOS 16.0+<br>tvOS 16.0+<br>watchOS 9.0+<br>visionOS 1.0+ | Swift 6.0+ / Xcode 16.0+ | Swift Package Manager | [![Apple Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-apple.yml/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-apple.yml) |
+| Linux | Swift 6.0+ | Swift Package Manager | [![Linux Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-linux.yml/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-linux.yml) |
 
 ## Installation
 
