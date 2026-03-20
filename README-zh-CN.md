@@ -256,7 +256,7 @@ let executor = SequentialExecutor(
 | API | 交付方式 | 更适合 | 需要注意 |
 | --- | --- | --- | --- |
 | `eventHandler` | 初始化时配置的同步回调 | 需要一个固定、轻量，并且希望在协调路径上立即收到事件的观察者 | 不要在这里做重活。磁盘 I/O、网络请求、主线程切换或复杂日志处理都会直接拖慢执行器；更合适的做法是把重操作转交给其他 `Task` 或队列。 |
-| `events(bufferingPolicy:)` | 可通过 `for await` 消费的 `AsyncStream<Event>` | 需要异步消费、动态订阅，或者希望每个消费者自行选择 buffering 行为 | 慢消费者仍然可能因为 `bufferingPolicy` 的设置而积压事件或丢失事件。 |
+| `events(bufferingPolicy:)` | 可通过 `for await` 消费的 `AsyncStream<Event>` | 需要异步消费、动态订阅，或者希望每个消费者自行选择 buffering 行为 | 慢消费者仍然可能因为事件缓冲策略的设置而积压事件或丢失事件。 |
 
 ### 调度策略
 

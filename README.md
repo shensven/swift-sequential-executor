@@ -256,7 +256,7 @@ Note: if event handling needs heavier work, hand the event off to another `Task`
 | API | Delivery Style | Best For | Watch Out For |
 | --- | --- | --- | --- |
 | `eventHandler` | Synchronous callback configured at initialization | A fixed lightweight observer that should receive events immediately on the coordination path | Heavy work here can delay the executor itself. Hand off expensive work to another `Task` or queue. |
-| `events(bufferingPolicy:)` | `AsyncStream<Event>` consumed with `for await` | Async consumption, dynamic subscriptions, or per-consumer buffering choices | Slow consumers can still accumulate buffered events or drop events depending on the selected buffering policy. |
+| `events(bufferingPolicy:)` | `AsyncStream<Event>` consumed with `for await` | Async consumption, dynamic subscriptions, or per-consumer buffering choices | Slow consumers can still accumulate buffered events or drop events depending on the selected event buffering policy. |
 
 ### Policy
 

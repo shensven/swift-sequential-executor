@@ -141,6 +141,16 @@ public actor SequentialExecutor {
         }
     }
 
+    /// Controls how event subscribers buffer lifecycle events.
+    public enum EventBufferingPolicy: Sendable, Equatable {
+        /// Buffers every event until the consumer receives it.
+        case unbounded
+        /// Buffers at most `limit` events and drops the oldest buffered event first.
+        case bufferingOldest(Int)
+        /// Buffers at most `limit` events and keeps the newest buffered event.
+        case bufferingNewest(Int)
+    }
+
     // MARK: Stored Properties
 
     private let execute: @Sendable (ExecutionContext) async throws -> Void
@@ -229,12 +239,20 @@ public extension SequentialExecutor {
 
     /// Returns an async sequence view of the executor lifecycle events.
     ///
+    /// The stream observes the same `Event` values emitted to `eventHandler`, using
+    /// an unbounded buffer.
+    func events() -> AsyncStream<Event> {
+        events(bufferingPolicy: .unbounded)
+    }
+
+    /// Returns an async sequence view of the executor lifecycle events.
+    ///
     /// The stream observes the same `Event` values emitted to `eventHandler`, but
     /// delivers them asynchronously according to the provided buffering policy.
-    func events(bufferingPolicy: AsyncStream<Event>.Continuation.BufferingPolicy = .unbounded) -> AsyncStream<Event> {
+    func events(bufferingPolicy: EventBufferingPolicy) -> AsyncStream<Event> {
         let subscriberID = UUID()
         var continuation: AsyncStream<Event>.Continuation?
-        let stream = AsyncStream<Event>(bufferingPolicy: bufferingPolicy) {
+        let stream = AsyncStream<Event>(bufferingPolicy: bufferingPolicy.asyncStreamPolicy) {
             continuation = $0
         }
 
@@ -249,6 +267,16 @@ public extension SequentialExecutor {
         }
         eventContinuations[subscriberID] = continuation
         return stream
+    }
+}
+
+private extension SequentialExecutor.EventBufferingPolicy {
+    var asyncStreamPolicy: AsyncStream<SequentialExecutor.Event>.Continuation.BufferingPolicy {
+        switch self {
+        case .unbounded: return .unbounded
+        case let .bufferingOldest(limit): return .bufferingOldest(limit)
+        case let .bufferingNewest(limit): return .bufferingNewest(limit)
+        }
     }
 }
 
