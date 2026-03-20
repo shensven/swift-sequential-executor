@@ -27,7 +27,7 @@ Apple 的 [Run Loop 指南](https://developer.apple.com/library/archive/document
 - 保持公开接口尽量小，把运行时细节留在内部实现里
 
 > [!TIP]
-> 核心接口只聚焦在 `execute`、`eventHandler`、`updatePolicy(_:)` 和 `executeNow()`
+> 核心接口只聚焦在 `execute`、`eventHandler`、`events()`、`updatePolicy(_:)` 和 `executeNow()`
 >
 > 其他细节都被封装在内部 ;-)
 
@@ -89,6 +89,25 @@ await executor.executeNow()
 这段代码可以放在任意异步上下文中运行，例如应用启动流程、异步测试，或者一个 `Task` 里。`updatePolicy(_:)` 用来开启固定间隔调度，`executeNow()` 用来发起一次立即执行。
 
 如果你想调试更完整的运行行为，可以继续查看[示例应用](#示例应用)。
+
+如果你更希望以异步流的方式消费事件，也可以通过 `events()` 订阅：
+
+```swift
+let executor = SequentialExecutor(
+    execute: {
+        try await Task.sleep(for: .seconds(2))
+    }
+)
+
+let eventTask = Task {
+    for await event in await executor.events() {
+        print(event.kind)
+    }
+}
+
+await executor.executeNow()
+eventTask.cancel()
+```
 
 ## 适用场景
 
@@ -208,7 +227,7 @@ sequenceDiagram
 
 这一节只作为公开 API 和生命周期类型的参考索引使用。
 
-### 初始化器参数说明
+### 初始化器
 
 | 参数 | 作用 | 回调内容 |
 | --- | --- | --- |
@@ -229,6 +248,15 @@ let executor = SequentialExecutor(
 ```
 
 注意：如果事件处理本身比较重，应该在回调内部把事件转交给其他 `Task` 或队列处理。
+
+### 事件观察 API
+
+`SequentialExecutor` 会通过两种观察 API 暴露同一套生命周期 `Event`。两者的区别主要在交付方式，而不是事件内容。
+
+| API | 交付方式 | 更适合 | 需要注意 |
+| --- | --- | --- | --- |
+| `eventHandler` | 初始化时配置的同步回调 | 需要一个固定、轻量，并且希望在协调路径上立即收到事件的观察者 | 不要在这里做重活。磁盘 I/O、网络请求、主线程切换或复杂日志处理都会直接拖慢执行器；更合适的做法是把重操作转交给其他 `Task` 或队列。 |
+| `events(bufferingPolicy:)` | 可通过 `for await` 消费的 `AsyncStream<Event>` | 需要异步消费、动态订阅，或者希望每个消费者自行选择 buffering 行为 | 慢消费者仍然可能因为 `bufferingPolicy` 的设置而积压事件或丢失事件。 |
 
 ### 调度策略
 

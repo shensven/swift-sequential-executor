@@ -207,6 +207,17 @@ private final class ExecutionContextRecorder: @unchecked Sendable {
 
 private struct StubError: Error, Sendable {}
 
+private func recordEvents(
+    from stream: AsyncStream<SequentialExecutor.Event>,
+    into recorder: EventRecorder
+) -> Task<Void, Never> {
+    Task {
+        for await event in stream {
+            recorder.record(event)
+        }
+    }
+}
+
 // MARK: Event Matchers - General
 
 private extension SequentialExecutor.Event {
@@ -370,6 +381,60 @@ private extension SequentialExecutor.Event {
     await executor.executeNow()
 
     #expect(events.snapshot().contains(where: { $0.isImmediateExecutionFailed }))
+}
+
+@Test func eventsStream_receivesImmediateExecutionLifecycleEvents() async {
+    let events = EventRecorder()
+    let executor = SequentialExecutor(execute: {})
+    let stream = await executor.events()
+    let collector = recordEvents(from: stream, into: events)
+
+    await executor.executeNow()
+
+    let snapshot = await events.wait { events in
+        events.contains(where: { $0.isRequested })
+            && events.contains(where: { $0.isImmediateExecutionStarted })
+            && events.contains(where: { $0.isImmediateExecutionFinished })
+    }
+
+    collector.cancel()
+
+    #expect(snapshot != nil)
+}
+
+@Test func eventsStream_receivesSameEventKindsAsEventHandler() async {
+    let callbackEvents = EventRecorder()
+    let streamEvents = EventRecorder()
+    let executor = SequentialExecutor(
+        execute: {},
+        eventHandler: { event in
+            callbackEvents.record(event)
+        }
+    )
+    let stream = await executor.events()
+    let collector = recordEvents(from: stream, into: streamEvents)
+
+    await executor.executeNow()
+
+    let callbackSnapshot = await callbackEvents.wait { events in
+        events.contains(where: { $0.isImmediateExecutionFinished })
+    }
+    let streamSnapshot = await streamEvents.wait { events in
+        events.contains(where: { $0.isImmediateExecutionFinished })
+    }
+
+    collector.cancel()
+
+    #expect(callbackSnapshot?.count == streamSnapshot?.count)
+
+    if let callbackSnapshot, let streamSnapshot {
+        #expect(callbackSnapshot.contains(where: { $0.isRequested }))
+        #expect(streamSnapshot.contains(where: { $0.isRequested }))
+        #expect(callbackSnapshot.contains(where: { $0.isImmediateExecutionStarted }))
+        #expect(streamSnapshot.contains(where: { $0.isImmediateExecutionStarted }))
+        #expect(callbackSnapshot.contains(where: { $0.isImmediateExecutionFinished }))
+        #expect(streamSnapshot.contains(where: { $0.isImmediateExecutionFinished }))
+    }
 }
 
 // MARK: executeNow() Concurrency

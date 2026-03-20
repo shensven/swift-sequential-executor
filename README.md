@@ -27,7 +27,7 @@ In practice, using `Timer` for this kind of async coordination usually leaves th
 - keeps the public API intentionally small while leaving runtime details internal
 
 > [!TIP]
-> The core API stays focused on `execute`, `eventHandler`, `updatePolicy(_:)`, and `executeNow()`.
+> The core API stays focused on `execute`, `eventHandler`, `events()`, `updatePolicy(_:)`, and `executeNow()`.
 >
 > Everything else stays internal ;-)
 
@@ -89,6 +89,25 @@ await executor.executeNow()
 Run this from any async context, such as app startup, an async test, or a `Task`. `updatePolicy(_:)` enables interval-based execution, and `executeNow()` requests an immediate run.
 
 If you want to debug the fuller runtime behavior, see [Example App](#example-app).
+
+If you prefer async event consumption, subscribe through `events()`:
+
+```swift
+let executor = SequentialExecutor(
+    execute: {
+        try await Task.sleep(for: .seconds(2))
+    }
+)
+
+let eventTask = Task {
+    for await event in await executor.events() {
+        print(event.kind)
+    }
+}
+
+await executor.executeNow()
+eventTask.cancel()
+```
 
 ## When to Use
 
@@ -208,7 +227,7 @@ Use it to debug and inspect the runtime behavior of `SequentialExecutor`, includ
 
 This section is a reference index for the public API surface and lifecycle types.
 
-### Initializer Configuration
+### Initializer
 
 | Configuration | Role | Callback Input |
 | --- | --- | --- |
@@ -229,6 +248,15 @@ let executor = SequentialExecutor(
 ```
 
 Note: if event handling needs heavier work, hand the event off to another `Task` or queue from inside the callback.
+
+### Event Observation APIs
+
+`SequentialExecutor` exposes the same lifecycle `Event` values through two observation APIs. Choose between them based on delivery semantics rather than event content.
+
+| API | Delivery Style | Best For | Watch Out For |
+| --- | --- | --- | --- |
+| `eventHandler` | Synchronous callback configured at initialization | A fixed lightweight observer that should receive events immediately on the coordination path | Heavy work here can delay the executor itself. Hand off expensive work to another `Task` or queue. |
+| `events(bufferingPolicy:)` | `AsyncStream<Event>` consumed with `for await` | Async consumption, dynamic subscriptions, or per-consumer buffering choices | Slow consumers can still accumulate buffered events or drop events depending on the selected buffering policy. |
 
 ### Policy
 

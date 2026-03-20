@@ -146,6 +146,7 @@ public actor SequentialExecutor {
     private let execute: @Sendable (ExecutionContext) async throws -> Void
     private let eventHandler: ((Event) -> Void)?
     private let clock = ContinuousClock()
+    private var eventContinuations: [UUID: AsyncStream<Event>.Continuation] = [:]
 
     private var loopTask: Task<Void, Never>?
     private var loopTaskID: UUID?
@@ -199,6 +200,7 @@ public actor SequentialExecutor {
     deinit {
         loopTask?.cancel()
         executionTask?.cancel()
+        eventContinuations.values.forEach { $0.finish() }
     }
 }
 
@@ -223,6 +225,30 @@ public extension SequentialExecutor {
     /// forcibly terminate non-cooperative work.
     func executeNow() async {
         await executeImmediately()
+    }
+
+    /// Returns an async sequence view of the executor lifecycle events.
+    ///
+    /// The stream observes the same `Event` values emitted to `eventHandler`, but
+    /// delivers them asynchronously according to the provided buffering policy.
+    func events(bufferingPolicy: AsyncStream<Event>.Continuation.BufferingPolicy = .unbounded) -> AsyncStream<Event> {
+        let subscriberID = UUID()
+        var continuation: AsyncStream<Event>.Continuation?
+        let stream = AsyncStream<Event>(bufferingPolicy: bufferingPolicy) {
+            continuation = $0
+        }
+
+        guard let continuation else {
+            preconditionFailure("AsyncStream failed to provide a continuation.")
+        }
+
+        continuation.onTermination = { [weak self] _ in
+            Task {
+                await self?.removeEventContinuation(subscriberID)
+            }
+        }
+        eventContinuations[subscriberID] = continuation
+        return stream
     }
 }
 
@@ -404,8 +430,16 @@ private extension SequentialExecutor {
 // MARK: Event Emission
 
 private extension SequentialExecutor {
+    func removeEventContinuation(_ subscriberID: UUID) {
+        eventContinuations.removeValue(forKey: subscriberID)
+    }
+
     func emit(_ kind: Event.Kind, emittedAt: Date = .now) {
-        eventHandler?(Event(emittedAt: emittedAt, kind: kind))
+        let event = Event(emittedAt: emittedAt, kind: kind)
+        eventHandler?(event)
+        for continuation in eventContinuations.values {
+            continuation.yield(event)
+        }
     }
 }
 
