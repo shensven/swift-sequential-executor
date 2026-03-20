@@ -129,11 +129,18 @@ final class ViewModel {
     private var activeExecution: ActiveExecution?
     @ObservationIgnored private var pendingPolicy: SequentialExecutor.Policy?
     @ObservationIgnored private var policyUpdateTask: Task<Void, Never>?
+    @ObservationIgnored private var eventObservationTask: Task<Void, Never>?
     @ObservationIgnored private lazy var executor = makeExecutor()
 
     init() {
         refreshNextExecutionPreview()
+        startObservingEvents()
         updatePolicy()
+    }
+
+    deinit {
+        policyUpdateTask?.cancel()
+        eventObservationTask?.cancel()
     }
 
     // MARK: - Policy API
@@ -391,6 +398,17 @@ final class ViewModel {
         await policyUpdateTask?.value
     }
 
+    private func startObservingEvents() {
+        eventObservationTask?.cancel()
+        eventObservationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let stream = await self.executor.events()
+            for await event in stream {
+                self.handle(event)
+            }
+        }
+    }
+
     // MARK: - Event handling
 
     private func handle(_ event: SequentialExecutor.Event) {
@@ -487,12 +505,8 @@ final class ViewModel {
                 guard let self else { return }
                 try await self.runExecution(context: context)
             },
-            eventHandler: { [weak self] event in
-                // The executor emits events synchronously on its own coordination path.
-                // The example forwards them onto the main actor before touching UI state.
-                Task { @MainActor in
-                    self?.handle(event)
-                }
+            eventHandler: { event in
+                print("[SequentialExecutor] \(event.kind.title) • \(event.kind.detail)")
             }
         )
     }
