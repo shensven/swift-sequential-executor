@@ -9,22 +9,14 @@
 
 ## 为什么不直接用 Timer
 
-[`Timer.scheduledTimer(...)`](https://developer.apple.com/documentation/foundation/timer/scheduledtimer(withtimeinterval:repeats:block:)) 适合“过一会儿再触发一次回调”这类需求。但当回调内部开始执行异步任务时，调用方往往还需要自己处理串行执行、取消协作，以及手动触发和定时触发之间的协调关系。
+[`Timer.scheduledTimer(...)`](https://developer.apple.com/documentation/foundation/timer/scheduledtimer(withtimeinterval:repeats:block:)) 适合“过一会儿再触发一次回调”这类需求。但当回调内部需要执行异步任务时，调用方往往还需要自己处理可能会遇到的并发协调问题。
 
-Apple 的 [Run Loop 指南](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Multithreading/RunLoopManagement/RunLoopManagement.html) 也明确提到，定时器并不是实时机制；它是否按时触发，取决于运行循环是否正在运行、是否处于正确的模式，以及当时是否有机会处理回调。
+## SequentialExecutor 适合这些场景
 
-实际使用中，如果你拿 `Timer` 去协调这类异步执行问题，通常还得自己补上这些能力：
-
-- 它只负责把回调调度到运行循环上，但并不知道上一次异步任务是否已经结束
-- `repeats: true` 只表示定时器会继续触发，并不等于任务会串行执行；重叠执行和重入控制仍然要你自己处理
-- 当定时触发和手动触发同时存在时，`Timer` 本身并没有提供等待、替换执行或取消的协调模型
-
-## SequentialExecutor 解决了什么
-
-- 把这些协调逻辑收敛到一个 actor 类型里
-- 用 `updatePolicy(_:)` 和 `runNow()` 明确暴露调度入口
-- 按顺序发出生命周期事件，便于日志、监控和 UI 同步
-- 保持公开接口尽量小，把运行时细节留在内部实现里
+- 想定时执行异步任务，但前一次没结束时不要重叠
+- 想在定时等待过程中，随时插入一次立即执行
+- 想在立即执行前，先取消并等前一个任务真正结束
+- 想把开始、结束、取消、失败这些事件稳定地交给日志、监控或 UI
 
 > [!TIP]
 > 核心接口只聚焦在 `execute`、`eventHandler`、`events()`、`updatePolicy(_:)` 和 `runNow()`
@@ -72,9 +64,9 @@ import Foundation
 import SequentialExecutor
 
 let executor = SequentialExecutor(
-    execute: {
+    execute: { context in
+        print("triggered by \(context.source)")
         try await Task.sleep(for: .seconds(2))
-        print("refresh finished")
     },
     eventHandler: { event in
         print(event.kind)
@@ -86,18 +78,22 @@ await executor.runNow()
 
 ```
 
-这段代码可以放在任意异步上下文中运行，例如应用启动流程、异步测试，或者一个 `Task` 里。`updatePolicy(_:)` 用来开启固定间隔调度，`runNow()` 用来发起一次立即执行。
+这段代码可以放在任意异步上下文中运行，例如应用启动流程、异步测试，或者一个 `Task` 里。每次执行开始时，执行器都会把当前的 `ExecutionContext` 传给 `execute` 闭包；`updatePolicy(_:)` 用来开启固定间隔调度，`runNow()` 用来发起一次立即执行。
 
-如果你想调试更完整的运行行为，可以继续查看[示例应用](#示例应用)。
-
-如果你更希望以异步流的方式消费事件，也可以通过 `events()` 订阅：
+如果你不需要让初始化器里的 `execute` 参数接收上下文值，也可以使用一个更简洁的便利初始化器：
 
 ```swift
-let executor = SequentialExecutor(
-    execute: {
-        try await Task.sleep(for: .seconds(2))
-    }
-)
+let executor = SequentialExecutor {
+    try await Task.sleep(for: .seconds(2))
+}
+```
+
+注意：如果事件处理本身比较重，或者更希望以异步流的方式消费事件，也可以通过 `events()` 订阅：
+
+```swift
+let executor = SequentialExecutor {
+    try await Task.sleep(for: .seconds(2))
+}
 
 let eventTask = Task {
     for await event in await executor.events() {
@@ -109,26 +105,17 @@ await executor.runNow()
 eventTask.cancel()
 ```
 
-## 适用场景
+如果你想调试更完整的运行行为，可以继续查看[示例应用](#示例应用)。
 
-当你的需求本身已经包含执行协调语义时，`SequentialExecutor` 会比直接使用 `Timer` 更合适，例如：
+## 行为概览
 
-- 需要按固定间隔触发异步工作，但不希望任务重叠执行
-- 需要在定时执行之外，随时发起一次立即执行，并在需要时替换当前等待流程
-- 需要在替换当前执行时，请求取消并等待前一次任务结束
-- 需要把执行生命周期稳定地暴露给日志、监控或 UI
+从高层来看，`SequentialExecutor` 的运行行为可以先抓住 3 个要点：
 
-如果你的需求只是“稍后触发一次简单回调”，并不涉及异步任务协调，那么直接使用 `Timer` 往往就足够了。
+- 任意时刻只会有一个执行真正处于运行中
+- `runNow()` 会发起一次立即执行，但不会粗暴打断一个已经在运行的任务
+- 一次立即执行结束后，调度循环是否恢复，要看当前策略是否仍然保持启用
 
-## 行为说明
-
-从高层语义上看，`SequentialExecutor` 的行为可以先概括为 3 点：
-
-- 任意时刻都只会有一次执行处于运行中
-- `runNow()` 会发起一次立即执行，但不会粗暴中断正在运行的任务
-- 一次立即执行结束后，调度循环是否恢复，取决于当前策略是否仍然启用
-
-如果你只关心如何接入，这里已经足够。想看更完整的运行时模型，可以展开下面的内容。
+如果你现在只关心怎样把它接入到项目里，读到这里通常已经足够；如果你还想进一步理解完整的运行时模型，可以继续看下面的状态和执行流程。
 
 <details>
 <summary>状态模型</summary>
@@ -232,24 +219,9 @@ sequenceDiagram
 | 参数 | 作用 | 回调内容 |
 | --- | --- | --- |
 | `execute` | 真正执行业务工作的闭包。`SequentialExecutor` 每次启动一次执行时，都会带着当前执行上下文调用它一次。 | 一个 `context` 参数，包含当前执行的元数据，例如 `executionID` 和 `source`。 |
-| `eventHandler` | 生命周期事件观察器。它会按顺序接收执行事件，方便你做日志、监控或同步外部状态。这个回调会在执行器的协调路径上同步调用，因此应该保持轻量且非阻塞。 | 一个 `event` 参数，用来描述一次生命周期变化，包含 `emittedAt`、`executionID`、`source` 和 `kind`。 |
+| `eventHandler` | 生命周期事件观察器。它会按顺序接收执行事件，方便你做日志、监控或同步外部状态。这个回调会在执行器的协调路径上同步调用，因此应该保持轻量且非阻塞。 | 一个 `event` 参数。它的顶层字段只有 `emittedAt` 和 `kind`；像 `executionID`、`source` 这类执行相关元数据，会出现在对应 `event.kind` case 的关联值中。 |
 
-如果你不需要让初始化器里的 `execute` 参数接收上下文值，也可以使用一个更简洁的便利初始化器：
-
-```swift
-let executor = SequentialExecutor(
-    execute: {
-        try await Task.sleep(for: .seconds(2))
-    },
-    eventHandler: { event in
-        print(event.kind)
-    }
-)
-```
-
-注意：如果事件处理本身比较重，应该在回调内部把事件转交给其他 `Task` 或队列处理。
-
-### 事件观察 API
+### 事件观察
 
 `SequentialExecutor` 会通过两种观察 API 暴露同一套生命周期 `Event`。两者的区别主要在交付方式，而不是事件内容。
 
