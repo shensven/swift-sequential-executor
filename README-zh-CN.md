@@ -2,6 +2,7 @@
 
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fshensven%2Fswift-sequential-executor%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/shensven/swift-sequential-executor)
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fshensven%2Fswift-sequential-executor%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/shensven/swift-sequential-executor)
+[![pages-build-deployment](https://github.com/shensven/swift-sequential-executor/actions/workflows/pages/pages-build-deployment/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/pages/pages-build-deployment)
 
 [English](README.md)｜简体中文
 
@@ -11,12 +12,13 @@
 
 [`Timer.scheduledTimer(...)`](https://developer.apple.com/documentation/foundation/timer/scheduledtimer(withtimeinterval:repeats:block:)) 适合“过一会儿再触发一次回调”这类需求。但当回调内部需要执行异步任务时，调用方往往还需要自己处理可能会遇到的并发协调问题。
 
-## SequentialExecutor 适合这些场景
+## SequentialExecutor 提供了什么
 
-- 想定时执行异步任务，但前一次没结束时不要重叠
-- 想在定时等待过程中，随时插入一次立即执行
-- 想在立即执行前，先取消并等前一个任务真正结束
-- 想把开始、结束、取消、失败这些事件稳定地交给日志、监控或 UI
+- 按固定间隔执行异步任务，并避免与未完成的上一次执行重叠
+- 在调度循环等待期间发起抢占式立即执行
+- 在启动替代执行前，先协调取消并等待当前执行真正结束
+- 提供稳定的开始、结束、取消、失败事件，方便接入日志、监控或 UI
+- 完整的 [API 文档](https://shensven.github.io/swift-sequential-executor/documentation/sequentialexecutor/)
 
 > [!TIP]
 > 核心接口只聚焦在 `execute`、`eventHandler`、`events()`、`updatePolicy(_:)` 和 `runNow()`
@@ -209,71 +211,3 @@ sequenceDiagram
 仓库里包含一个 SwiftUI 示例应用，位置在 [`Examples/SequentialExecutorExample`](Examples/SequentialExecutorExample)。
 
 你可以用它调试和观察 `SequentialExecutor` 的运行时行为，包括调度循环变化、立即执行、取消协调，以及生命周期事件的发出顺序。这个示例会把可见状态保持为事件驱动，方便直接检查等待与执行的时间线变化。
-
-## API 细节
-
-这一节只作为公开 API 和生命周期类型的参考索引使用。
-
-### 初始化器
-
-| 参数 | 作用 | 回调内容 |
-| --- | --- | --- |
-| `execute` | 真正执行业务工作的闭包。`SequentialExecutor` 每次启动一次执行时，都会带着当前执行上下文调用它一次。 | 一个 `context` 参数，包含当前执行的元数据，例如 `executionID` 和 `source`。 |
-| `eventHandler` | 生命周期事件观察器。它会按顺序接收执行事件，方便你做日志、监控或同步外部状态。这个回调会在执行器的协调路径上同步调用，因此应该保持轻量且非阻塞。 | 一个 `event` 参数。它的顶层字段只有 `emittedAt` 和 `kind`；像 `executionID`、`source` 这类执行相关元数据，会出现在对应 `event.kind` case 的关联值中。 |
-
-### 事件观察
-
-`SequentialExecutor` 会通过两种观察 API 暴露同一套生命周期 `Event`。两者的区别主要在交付方式，而不是事件内容。
-
-| API | 交付方式 | 更适合 | 需要注意 |
-| --- | --- | --- | --- |
-| `eventHandler` | 初始化时配置的同步回调 | 需要一个固定、轻量，并且希望在协调路径上立即收到事件的观察者 | 不要在这里做重活。磁盘 I/O、网络请求、主线程切换或复杂日志处理都会直接拖慢执行器；更合适的做法是把重操作转交给其他 `Task` 或队列。 |
-| `events(bufferingPolicy:)` | 可通过 `for await` 消费的 `AsyncStream<Event>` | 需要异步消费、动态订阅，或者希望每个消费者自行选择 buffering 行为 | 慢消费者仍然可能因为事件缓冲策略的设置而积压事件或丢失事件。 |
-
-### 调度策略
-
-这里列出的是 `SequentialExecutor.Policy` 的公开配置方式。
-
-| API | 含义 | 说明 |
-| --- | --- | --- |
-| `Policy(runLoop: .disabled)` | 关闭调度循环，不会再启动基于固定间隔的执行。 | 通过 `updatePolicy(_:)` 应用。 |
-| `Policy(runLoop: .interval(duration))` | 开启调度循环，并在每次执行之间等待 `duration`。 | 通过 `updatePolicy(_:)` 应用，且 `duration` 必须大于 0。 |
-
-### 执行上下文
-
-这里列出的是 `SequentialExecutor.ExecutionContext` 的字段索引。
-
-| 字段 | 含义 |
-| --- | --- |
-| `executionID` | 当前这次执行的唯一标识。它会和对应的执行生命周期事件保持一致。 |
-| `source` | 触发这次执行的来源：要么是 `runNow(requestID:)`，要么是 `scheduledLoop(loopID:)`。 |
-
-### 事件枚举
-
-这里列出的是 `SequentialExecutor.Event.Kind` 的 case 索引。
-
-| `event.kind` | 含义 |
-| --- | --- |
-| `requested(requestID:)` | 通过 `runNow()` 发起了一次立即执行请求。 |
-| `executionStarted(executionID:source:)` | 一次执行已经开始，且即将进入 `execute(context)`。 |
-| `executionFinished(executionID:source:)` | 一次执行成功完成。 |
-| `executionCancelled(executionID:source:)` | 一次执行被取消。 |
-| `executionFailed(executionID:source:error:)` | 一次执行因错误失败。 |
-| `policyUpdated(previous:new:)` | 执行器的策略配置已更新。 |
-| `loopStarted(loopID:)` | 一个新的调度循环已经启动。 |
-| `loopStopped(loopID:reason:)` | 当前调度循环被请求停止。 |
-| `loopExited(loopID:)` | 当前调度循环已经完全退出。 |
-| `waitStarted(loopID:interval:)` | 调度循环开始等待下一个间隔。 |
-| `waitCancelled(loopID:)` | 当前等待被取消。 |
-| `waitFailed(loopID:error:)` | 当前等待因错误失败。 |
-| `intervalElapsed(loopID:)` | 配置的间隔已到期，调度循环可以继续安排执行。 |
-
-### 循环停止原因
-
-这里列出的是 `SequentialExecutor.LoopStopReason` 的 case 索引。
-
-| `reason` | 含义 |
-| --- | --- |
-| `runNowRequested` | 调度循环因为 `runNow()` 发起立即执行而被停止。 |
-| `policyDisabled` | 调度循环因为当前策略关闭了定时执行而被停止。 |
-| `policyUpdated` | 调度循环因为策略变更，需要从干净状态重新启动调度而被停止。 |

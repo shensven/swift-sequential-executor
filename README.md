@@ -2,6 +2,7 @@
 
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fshensven%2Fswift-sequential-executor%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/shensven/swift-sequential-executor)
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fshensven%2Fswift-sequential-executor%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/shensven/swift-sequential-executor)
+[![pages-build-deployment](https://github.com/shensven/swift-sequential-executor/actions/workflows/pages/pages-build-deployment/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/pages/pages-build-deployment)
 
 English｜[简体中文](README-zh-CN.md)
 
@@ -11,12 +12,13 @@ A sequential async executor for coordinating scheduled work and immediate execut
 
 [`Timer.scheduledTimer(...)`](https://developer.apple.com/documentation/foundation/timer/scheduledtimer(withtimeinterval:repeats:block:)) is suitable for requirements like "trigger a callback once after a while." But when that callback needs to perform asynchronous work, callers often still have to deal with the concurrency coordination problems themselves.
 
-## SequentialExecutor Fits These Scenarios
+## What SequentialExecutor Provides
 
-- you want to run async work on an interval, but never overlap with an unfinished run
-- you want to insert an immediate run while the scheduled loop is waiting
-- you want to cancel the current run and wait for it to actually finish before starting the replacement
-- you want stable started/finished/cancelled/failed events for logging, monitoring, or UI
+- Runs async work on a fixed interval without overlapping unfinished executions
+- Starts preemptive immediate execution while the scheduled loop is waiting
+- Coordinates cancellation and waits for the current execution to finish before starting a replacement execution
+- Emits stable started/finished/cancelled/failed events for logging, monitoring, or UI
+- Full [API Documentation](https://shensven.github.io/swift-sequential-executor/documentation/sequentialexecutor/)
 
 > [!TIP]
 > The core API stays focused on `execute`, `eventHandler`, `events()`, `updatePolicy(_:)`, and `runNow()`.
@@ -209,71 +211,3 @@ sequenceDiagram
 The repository includes a SwiftUI example app at [`Examples/SequentialExecutorExample`](Examples/SequentialExecutorExample).
 
 You can use it to debug and observe the runtime behavior of `SequentialExecutor`, including scheduling loop changes, immediate execution, cancellation coordination, and the emission order of lifecycle events. The example keeps visible state event-driven, which makes it easier to inspect waiting and execution timeline changes directly.
-
-## API Details
-
-This section is only intended as a reference index for the public API and lifecycle types.
-
-### Initializer
-
-| Parameter | Role | Callback Input |
-| --- | --- | --- |
-| `execute` | The closure that performs the actual work. Each time `SequentialExecutor` starts an execution, it calls this closure once with the current execution context. | A `context` parameter containing metadata about the current execution, such as `executionID` and `source`. |
-| `eventHandler` | The lifecycle event observer. It receives execution events in order so you can log, monitor, or synchronize external state. This callback is invoked synchronously on the executor's coordination path, so it should remain lightweight and non-blocking. | An `event` parameter. Its top-level fields are only `emittedAt` and `kind`; execution metadata such as `executionID` and `source` appears in the associated values of the corresponding `event.kind` cases. |
-
-### Event Observation
-
-`SequentialExecutor` exposes the same lifecycle `Event` values through two observation APIs. The difference is mainly in delivery style, not event content.
-
-| API | Delivery Style | Better For | Watch Out For |
-| --- | --- | --- | --- |
-| `eventHandler` | Synchronous callback configured at initialization | A fixed, lightweight observer that should receive events immediately on the coordination path | Do not do heavy work here. Disk I/O, network requests, main-thread hopping, or complex logging can directly slow down the executor; it is better to hand expensive work off to another `Task` or queue. |
-| `events(bufferingPolicy:)` | `AsyncStream<Event>` consumable with `for await` | Async consumption, dynamic subscriptions, or cases where each consumer should choose its own buffering behavior | Slow consumers can still accumulate buffered events or drop events depending on the selected buffering policy. |
-
-### Policy
-
-The table below lists the public configuration forms of `SequentialExecutor.Policy`.
-
-| API | Meaning | Notes |
-| --- | --- | --- |
-| `Policy(runLoop: .disabled)` | Disables the scheduling loop, so no more fixed-interval executions will be started. | Apply it through `updatePolicy(_:)`. |
-| `Policy(runLoop: .interval(duration))` | Enables the scheduling loop and waits `duration` between executions. | Apply it through `updatePolicy(_:)`, and `duration` must be greater than 0. |
-
-### Execution Context
-
-The table below lists the fields of `SequentialExecutor.ExecutionContext`.
-
-| Field | Meaning |
-| --- | --- |
-| `executionID` | The unique identifier of the current execution. It stays consistent with the corresponding execution lifecycle events. |
-| `source` | What triggered this execution: either `runNow(requestID:)` or `scheduledLoop(loopID:)`. |
-
-### Event Cases
-
-The table below lists the cases of `SequentialExecutor.Event.Kind`.
-
-| `event.kind` | Meaning |
-| --- | --- |
-| `requested(requestID:)` | An immediate execution request was issued through `runNow()`. |
-| `executionStarted(executionID:source:)` | An execution has started and is about to enter `execute(context)`. |
-| `executionFinished(executionID:source:)` | An execution completed successfully. |
-| `executionCancelled(executionID:source:)` | An execution was cancelled. |
-| `executionFailed(executionID:source:error:)` | An execution failed with an error. |
-| `policyUpdated(previous:new:)` | The executor's policy configuration was updated. |
-| `loopStarted(loopID:)` | A new scheduling loop has started. |
-| `loopStopped(loopID:reason:)` | The current scheduling loop was requested to stop. |
-| `loopExited(loopID:)` | The current scheduling loop has fully exited. |
-| `waitStarted(loopID:interval:)` | The scheduling loop started waiting for the next interval. |
-| `waitCancelled(loopID:)` | The current wait was cancelled. |
-| `waitFailed(loopID:error:)` | The current wait failed with an error. |
-| `intervalElapsed(loopID:)` | The configured interval elapsed and the scheduling loop can proceed to arrange execution. |
-
-### Loop Stop Reasons
-
-The table below lists the cases of `SequentialExecutor.LoopStopReason`.
-
-| `reason` | Meaning |
-| --- | --- |
-| `runNowRequested` | The scheduling loop was stopped because `runNow()` requested an immediate execution. |
-| `policyDisabled` | The scheduling loop was stopped because the current policy disabled scheduled execution. |
-| `policyUpdated` | The scheduling loop was stopped because the policy changed and scheduling needed to restart from a clean state. |
