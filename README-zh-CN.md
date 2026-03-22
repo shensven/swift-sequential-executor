@@ -211,3 +211,7 @@ sequenceDiagram
 仓库里包含一个 SwiftUI 示例应用，位置在 [`Examples/SequentialExecutorExample`](Examples/SequentialExecutorExample)。
 
 你可以用它调试和观察 `SequentialExecutor` 的运行时行为，包括调度循环变化、立即执行、取消协调，以及生命周期事件的发出顺序。这个示例会把可见状态保持为事件驱动，方便直接检查等待与执行的时间线变化。
+
+## 许可证
+
+`swift-sequential-executor` 基于 MIT License 发布。详情请查看 [LICENSE](LICENSE)。
