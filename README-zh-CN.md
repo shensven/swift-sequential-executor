@@ -2,7 +2,6 @@
 
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fshensven%2Fswift-sequential-executor%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/shensven/swift-sequential-executor)
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fshensven%2Fswift-sequential-executor%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/shensven/swift-sequential-executor)
-[![pages-build-deployment](https://github.com/shensven/swift-sequential-executor/actions/workflows/pages/pages-build-deployment/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/pages/pages-build-deployment)
 
 [English](README.md)｜简体中文
 
@@ -18,7 +17,7 @@
 - 在调度循环等待期间发起抢占式立即执行
 - 在启动替代执行前，先协调取消并等待当前执行真正结束
 - 提供稳定的开始、结束、取消、失败事件，方便接入日志、监控或 UI
-- 完整的 [API 文档](https://shensven.github.io/swift-sequential-executor/documentation/sequentialexecutor/)
+- 完整的 [API 文档](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
 
 > [!TIP]
 > 核心接口只聚焦在 `execute`、`eventHandler`、`events()`、`updatePolicy(_:)` 和 `runNow()`

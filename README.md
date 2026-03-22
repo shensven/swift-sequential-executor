@@ -2,7 +2,6 @@
 
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fshensven%2Fswift-sequential-executor%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/shensven/swift-sequential-executor)
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fshensven%2Fswift-sequential-executor%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/shensven/swift-sequential-executor)
-[![pages-build-deployment](https://github.com/shensven/swift-sequential-executor/actions/workflows/pages/pages-build-deployment/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/pages/pages-build-deployment)
 
 English｜[简体中文](README-zh-CN.md)
 
@@ -18,7 +17,7 @@ A sequential async executor for coordinating scheduled work and immediate execut
 - Starts preemptive immediate execution while the scheduled loop is waiting
 - Coordinates cancellation and waits for the current execution to finish before starting a replacement execution
 - Emits stable started/finished/cancelled/failed events for logging, monitoring, or UI
-- Full [API Documentation](https://shensven.github.io/swift-sequential-executor/documentation/sequentialexecutor/)
+- Full [API Documentation](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
 
 > [!TIP]
 > The core API stays focused on `execute`, `eventHandler`, `events()`, `updatePolicy(_:)`, and `runNow()`.
