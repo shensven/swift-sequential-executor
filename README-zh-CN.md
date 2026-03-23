@@ -5,7 +5,7 @@
 
 [English](README.md)｜简体中文
 
-一个用于协调定时任务与立即执行请求的串行异步执行器。
+让异步任务逐个执行，可按定时运行，也可立即触发。
 
 ## 为什么不直接用 Timer
 
@@ -13,14 +13,14 @@
 
 ## SequentialExecutor 提供了什么
 
-- 按固定间隔执行异步任务，并避免与未完成的上一次执行重叠
-- 在调度循环等待期间发起抢占式立即执行
-- 在启动替代执行前，先协调取消并等待当前执行真正结束
-- 提供稳定的开始、结束、取消、失败事件，方便接入日志、监控或 UI
-- 完整的 [API 文档](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
+- [x] 按固定间隔运行异步任务
+- [x] 需要时可以立即触发一次异步任务
+- [x] 如果上一次还没结束，不会同时再跑一个，并会安全切换任务
+- [x] 提供开始、结束、取消、失败等生命周期事件，方便接入日志、监控或 UI
+- [x] 完整的 [API 文档](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
 
 > [!TIP]
-> 核心接口只聚焦在 `execute`、`eventHandler`、`events()`、`updatePolicy(_:)` 和 `runNow()`
+> 核心接口只聚焦在 `execute`、`updatePolicy(_:)` 和 `runNow()`
 >
 > 其他细节都被封装在内部 ;-)
 
@@ -76,7 +76,7 @@ let executor = SequentialExecutor(
 )
 
 await executor.updatePolicy(.init(runLoop: .interval(.seconds(5))))
-await executor.runNow()
+// await executor.runNow()
 
 ```
 
@@ -104,103 +104,103 @@ let eventTask = Task {
 }
 
 await executor.runNow()
-eventTask.cancel()
 ```
 
 如果你想调试更完整的运行行为，可以继续查看[示例应用](#示例应用)。
 
 ## 行为概览
 
-从高层来看，`SequentialExecutor` 的运行行为可以先抓住 3 个要点：
+从使用角度看，可以先记住 3 个核心行为：
 
-- 任意时刻只会有一个执行真正处于运行中
-- `runNow()` 会发起一次立即执行，但不会粗暴打断一个已经在运行的任务
-- 一次立即执行结束后，调度循环是否恢复，要看当前策略是否仍然保持启用
+- 同一时间只会运行一个异步任务
+- 可以按固定间隔运行，也可以随时立即触发
+- 当新任务需要接管时，会先请求当前任务通过协作式取消（cooperative task cancellation）安全退出，而不是直接打断它
 
-如果你现在只关心怎样把它接入到项目里，读到这里通常已经足够；如果你还想进一步理解完整的运行时模型，可以继续看下面的状态和执行流程。
+如果你现在只关心怎样把它接入到项目里，读到这里通常已经足够；如果你还想进一步理解完整的状态机设计，可以继续看下面的协调模型和轮替流程。
 
 <details>
-<summary>状态模型</summary>
+<summary>协调模型</summary>
 
-从可见的运行时状态来看，执行器可以用 4 个状态来描述：
+执行器有 5 个主要状态，下面这张图展示了它们之间的流转：
 
-- `Idle`：调度循环已关闭，当前没有任务在执行
-- `Waiting`：调度循环已开启，正在等待下一个间隔到来
-- `ScheduledExecution`：因为间隔到期而启动的一次执行
-- `ImmediateExecution`：因为 `runNow()` 请求立即执行而启动的一次执行
+- `Idle`：没有运行中的任务，也没有待处理的立即触发请求
+- `Waiting`：正在等待下一次定时触发
+- `ScheduledExecution`：定时触发的任务正在运行
+- `ImmediateRequestPending`：立即触发请求已经到来，正在等待切换
+- `ImmediateExecution`：立即触发的任务正在运行
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    Idle: 循环已关闭<br/>当前没有执行中的任务
+flowchart TD
+    Idle["Idle"]
+    Waiting["Waiting"]
+    ScheduledExecution["ScheduledExecution"]
+    ImmediateRequestPending["ImmediateRequestPending"]
+    ImmediateExecution["ImmediateExecution"]
 
-    Idle --> Waiting: updatePolicy(interval)
-    Waiting: 定时循环等待中
+    Idle -->|启用定时| Waiting
+    Idle -->|立即触发| ImmediateExecution
 
-    Waiting --> ScheduledExecution: intervalElapsed
-    ScheduledExecution: execute(context)<br/>source = scheduledLoop
-    ScheduledExecution --> Waiting: executionFinished / Cancelled / Failed
+    Waiting -->|定时到期| ScheduledExecution
+    Waiting -->|收到立即触发请求| ImmediateRequestPending
+    Waiting -->|关闭定时| Idle
 
-    Idle --> ImmediateExecution: runNow()
-    Waiting --> ImmediateExecution: runNow()<br/>先停止循环
-    ScheduledExecution --> ImmediateExecution: runNow()<br/>先取消当前执行
+    ScheduledExecution -->|任务结束，定时仍启用| Waiting
+    ScheduledExecution -->|任务结束，定时已关闭| Idle
+    ScheduledExecution -->|收到立即触发请求| ImmediateRequestPending
 
-    ImmediateExecution: execute(context)<br/>source = runNow
-    ImmediateExecution --> Waiting: executionFinished / Cancelled / Failed<br/>策略仍为固定间隔模式
-    ImmediateExecution --> Idle: executionFinished / Cancelled / Failed<br/>策略已禁用
+    ImmediateRequestPending -->|切换完成| ImmediateExecution
 
-    Waiting --> Idle: updatePolicy(disabled)
-    Waiting --> Waiting: updatePolicy(new interval)<br/>重新开始等待
+    ImmediateExecution -->|任务结束，定时仍启用| Waiting
+    ImmediateExecution -->|任务结束，定时已关闭| Idle
+    ImmediateExecution -->|收到新的立即触发请求| ImmediateRequestPending
 ```
+
+- 在 `Waiting` 中更新定时间隔后，状态仍然保持在 `Waiting`
+- 在 `ImmediateRequestPending` 中如果又收到新的立即触发请求，状态不变，但较早的待处理请求会让位给最新请求
 
 </details>
 
 <details>
-<summary>替换执行流程</summary>
+<summary>轮替流程</summary>
 
-`runNow()` 不会并行叠加执行。它会协调一次替换执行；如果当前已经有任务在运行，就先等待取消协作完成。
+当你发起一次立即触发时，执行器不会把新任务直接叠加到当前任务上，而是先把当前状态整理好，再把控制权交给新的那次运行，也就是一次任务接管。
 
 更具体地说：
 
-- 如果当前正处于等待下一个间隔的状态，那么这次等待会先被取消
-- 如果当前已经有任务在执行，执行器会先请求取消该任务，并等待它返回
-- 只有前一次执行真正结束后，替代执行才会开始
-- 如果在这段取消协调尚未完成时又连续到来多个 `runNow()` 调用，较早的待处理请求会让位给最新的那个请求
-- 每一次立即执行请求仍然都会被单独记录下来，但并不是每个请求都一定会真正启动一次执行
-- 如果当前任务没有正确配合 cancellation，替代执行的开始时间就可能被延后
-- 这次立即执行结束后，只有在当前策略仍然允许的前提下，调度循环才会恢复等待
+- 如果当前还在等待下一次定时触发，这段等待会先结束
+- 如果当前已经有任务在运行，执行器会先请求它通过协作式取消（cooperative cancellation）安全退出
+- 只有前一个任务真正结束后，新的立即任务才会开始
+- 如果切换过程中又连续收到多次立即触发请求，最后一次会接管（take over），前面的待处理请求会让位
+- 如果当前任务没有正确配合 cancellation，新的立即任务就只能继续等待
+- 这次立即任务结束后，如果定时仍然启用，执行器会回到等待状态
 
-下面这张时序图描述的是固定间隔策略已经生效时的一条代表性路径：
+下面这张时序图描述的是“当前已经有任务在运行，此时又收到一次立即触发”的典型接管路径：
 
 ```mermaid
 sequenceDiagram
     participant Caller as 调用方
     participant Executor as 执行器
-    participant Observer as 事件观察者
+    participant CurrentTask as 当前任务
+    participant NextTask as 新的立即任务
 
-    Caller->>Executor: updatePolicy(interval)
-    Executor-->>Observer: policyUpdated
-    Executor-->>Observer: loopStarted
-    Executor-->>Observer: waitStarted
+    Note over Executor,CurrentTask: 定时已开启（scheduled），且当前任务仍在运行
 
-    Caller->>Executor: runNow()
-    Executor-->>Observer: requested
-    Executor-->>Observer: loopStopped(runNowRequested)
-    Executor-->>Observer: waitCancelled
-    Executor-->>Observer: executionStarted(source: runNow)
-    Note over Executor: await execute(context)
+    Caller->>Executor: 立即触发（runNow）
+    Executor->>CurrentTask: 请求取消（request cancellation）
+    CurrentTask-->>Executor: 安全退出（cooperative cancellation）
+    Executor->>NextTask: 开始立即任务（start immediate task）
+    Note over NextTask: 运行异步任务（async task）
 
-    alt execute 正常返回
-        Executor-->>Observer: executionFinished
-    else execute 抛出错误
-        Executor-->>Observer: executionFailed
-    else execute 被取消
-        Executor-->>Observer: executionCancelled
+    alt 任务正常结束（finished）
+        NextTask-->>Executor: 任务结束（finished）
+    else 任务抛出错误（failed）
+        NextTask-->>Executor: 任务失败（failed）
+    else 任务被取消（cancelled）
+        NextTask-->>Executor: 任务取消（cancelled）
     end
 
-    opt 策略仍为固定间隔模式
-        Executor-->>Observer: loopStarted
-        Executor-->>Observer: waitStarted
+    opt 定时仍然启用（scheduling still enabled）
+        Executor-->>Executor: 回到等待（waiting）
     end
 ```
 

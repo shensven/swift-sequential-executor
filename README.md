@@ -5,7 +5,7 @@
 
 English｜[简体中文](README-zh-CN.md)
 
-A sequential async executor for coordinating scheduled work and immediate execution requests.
+Run async tasks one at a time, on a schedule or immediately.
 
 ## Why Not Just Use Timer
 
@@ -13,14 +13,14 @@ A sequential async executor for coordinating scheduled work and immediate execut
 
 ## What SequentialExecutor Provides
 
-- Runs async work on a fixed interval without overlapping unfinished executions
-- Starts preemptive immediate execution while the scheduled loop is waiting
-- Coordinates cancellation and waits for the current execution to finish before starting a replacement execution
-- Emits stable started/finished/cancelled/failed events for logging, monitoring, or UI
-- Full [API Documentation](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
+- [x] Runs async tasks on a fixed interval
+- [x] Lets you trigger an async task immediately when needed
+- [x] If the previous task is still running, it won't start another one at the same time and safely handles switching between runs
+- [x] Emits lifecycle events such as started, finished, cancelled, and failed for logging, monitoring, or UI
+- [x] Full [API Documentation](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
 
 > [!TIP]
-> The core API stays focused on `execute`, `eventHandler`, `events()`, `updatePolicy(_:)`, and `runNow()`.
+> The core API stays focused on `execute`, `updatePolicy(_:)`, and `runNow()`.
 >
 > Everything else stays internal ;-)
 
@@ -76,7 +76,7 @@ let executor = SequentialExecutor(
 )
 
 await executor.updatePolicy(.init(runLoop: .interval(.seconds(5))))
-await executor.runNow()
+// await executor.runNow()
 
 ```
 
@@ -104,103 +104,103 @@ let eventTask = Task {
 }
 
 await executor.runNow()
-eventTask.cancel()
 ```
 
 If you want to debug fuller runtime behavior, continue with the [Example App](#example-app).
 
 ## Behavior
 
-At a high level, the runtime behavior of `SequentialExecutor` can be understood through 3 points:
+From a usage perspective, there are 3 core behaviors to keep in mind:
 
-- only one execution can be running at any given time
-- `runNow()` triggers an immediate execution, but does not forcibly interrupt a task that is already running
-- whether scheduling resumes after an immediate execution finishes depends on whether the current policy is still enabled
+- Only one async task runs at a time
+- Tasks can run on a fixed interval or be triggered immediately when needed
+- When a new task needs to take over, the current task is asked to exit through cooperative task cancellation instead of being interrupted forcefully
 
-If you only care about integrating it into your project, this is usually enough. If you want the fuller runtime model, continue with the state model and replacement flow below.
+If you only care about integrating it into your project, this is usually enough. If you want to understand the full state machine design, continue with the coordination model and handoff flow below.
 
 <details>
-<summary>State Model</summary>
+<summary>Coordination Model</summary>
 
-From the visible runtime state, the executor can be described with 4 states:
+The executor has 5 main states, and the diagram below shows how they flow:
 
-- `Idle`: the scheduling loop is disabled and no task is currently executing
-- `Waiting`: the scheduling loop is enabled and is waiting for the next interval
-- `ScheduledExecution`: an execution started because the interval elapsed
-- `ImmediateExecution`: an execution started because `runNow()` requested it
+- `Idle`: no task is running and no immediate request is pending
+- `Waiting`: waiting for the next scheduled trigger
+- `ScheduledExecution`: a scheduled task is running
+- `ImmediateRequestPending`: an immediate request has arrived and handoff is in progress
+- `ImmediateExecution`: an immediately triggered task is running
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    Idle: loop disabled<br/>no execution in progress
+flowchart TD
+    Idle["Idle"]
+    Waiting["Waiting"]
+    ScheduledExecution["ScheduledExecution"]
+    ImmediateRequestPending["ImmediateRequestPending"]
+    ImmediateExecution["ImmediateExecution"]
 
-    Idle --> Waiting: updatePolicy(interval)
-    Waiting: scheduled loop waiting
+    Idle -->|Enable scheduling| Waiting
+    Idle -->|Trigger immediately| ImmediateExecution
 
-    Waiting --> ScheduledExecution: intervalElapsed
-    ScheduledExecution: execute(context)<br/>source = scheduledLoop
-    ScheduledExecution --> Waiting: executionFinished / Cancelled / Failed
+    Waiting -->|Interval elapsed| ScheduledExecution
+    Waiting -->|Immediate request arrives| ImmediateRequestPending
+    Waiting -->|Disable scheduling| Idle
 
-    Idle --> ImmediateExecution: runNow()
-    Waiting --> ImmediateExecution: runNow()<br/>stop loop first
-    ScheduledExecution --> ImmediateExecution: runNow()<br/>cancel current execution first
+    ScheduledExecution -->|Task finishes, scheduling still enabled| Waiting
+    ScheduledExecution -->|Task finishes, scheduling disabled| Idle
+    ScheduledExecution -->|Immediate request arrives| ImmediateRequestPending
 
-    ImmediateExecution: execute(context)<br/>source = runNow
-    ImmediateExecution --> Waiting: executionFinished / Cancelled / Failed<br/>policy still interval-based
-    ImmediateExecution --> Idle: executionFinished / Cancelled / Failed<br/>policy disabled
+    ImmediateRequestPending -->|Handoff completes| ImmediateExecution
 
-    Waiting --> Idle: updatePolicy(disabled)
-    Waiting --> Waiting: updatePolicy(new interval)<br/>restart waiting
+    ImmediateExecution -->|Task finishes, scheduling still enabled| Waiting
+    ImmediateExecution -->|Task finishes, scheduling disabled| Idle
+    ImmediateExecution -->|A newer immediate request arrives| ImmediateRequestPending
 ```
+
+- If the interval is updated while in `Waiting`, the executor remains in `Waiting`
+- If a newer immediate request arrives while in `ImmediateRequestPending`, the state does not change, but the older pending request yields to the newest one
 
 </details>
 
 <details>
-<summary>Replacement Flow</summary>
+<summary>Handoff Flow</summary>
 
-`runNow()` does not stack executions in parallel. It coordinates a replacement execution instead; if a task is already running, it first waits for cancellation cooperation to complete.
+When you trigger an immediate run, the executor does not pile a new task on top of the current one. It first clears the current state, then hands control over to the new run.
 
 More specifically:
 
-- if the executor is currently waiting for the next interval, that wait is cancelled first
-- if a task is already executing, the executor first requests cancellation and waits for it to return
-- the replacement execution starts only after the previous execution has actually finished
-- if multiple `runNow()` calls arrive while cancellation coordination is still in progress, older pending requests yield to the newest one
-- every immediate execution request is still recorded separately, but not every request is guaranteed to actually start an execution
-- if the current task does not cooperate with cancellation properly, the replacement execution may be delayed
-- after this immediate execution finishes, the scheduling loop resumes waiting only if the current policy still allows it
+- If the executor is still waiting for the next scheduled trigger, that wait ends first
+- If a task is already running, the executor asks it to exit safely through cooperative cancellation
+- The new immediate task starts only after the previous task has actually finished
+- If multiple immediate requests arrive during handoff, the latest one takes over and older pending requests yield
+- If the current task does not cooperate with cancellation, the new immediate task has to keep waiting
+- After the immediate task finishes, the executor goes back to waiting if scheduling is still enabled
 
-The sequence diagram below shows one representative path where the fixed-interval policy is already active:
+The sequence diagram below shows a typical path where a task is already running and an immediate trigger arrives:
 
 ```mermaid
 sequenceDiagram
     participant Caller
     participant Executor
-    participant Observer as event observer
+    participant CurrentTask as current task
+    participant NextTask as next immediate task
 
-    Caller->>Executor: updatePolicy(interval)
-    Executor-->>Observer: policyUpdated
-    Executor-->>Observer: loopStarted
-    Executor-->>Observer: waitStarted
+    Note over Executor,CurrentTask: Scheduling is active and the current task is still running
 
-    Caller->>Executor: runNow()
-    Executor-->>Observer: requested
-    Executor-->>Observer: loopStopped(runNowRequested)
-    Executor-->>Observer: waitCancelled
-    Executor-->>Observer: executionStarted(source: runNow)
-    Note over Executor: await execute(context)
+    Caller->>Executor: Trigger immediately
+    Executor->>CurrentTask: Request cancellation
+    CurrentTask-->>Executor: Exit safely
+    Executor->>NextTask: Start immediate task
+    Note over NextTask: Run async task
 
-    alt execute returns normally
-        Executor-->>Observer: executionFinished
-    else execute throws
-        Executor-->>Observer: executionFailed
-    else execute is cancelled
-        Executor-->>Observer: executionCancelled
+    alt Task finishes normally
+        NextTask-->>Executor: Task finished
+    else Task throws
+        NextTask-->>Executor: Task failed
+    else Task is cancelled
+        NextTask-->>Executor: Task cancelled
     end
 
-    opt policy still fixed-interval
-        Executor-->>Observer: loopStarted
-        Executor-->>Observer: waitStarted
+    opt Scheduling is still enabled
+        Executor-->>Executor: Return to waiting
     end
 ```
 
