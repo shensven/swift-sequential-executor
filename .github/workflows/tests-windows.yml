@@ -1,4 +1,4 @@
-name: Linux Tests
+name: Windows Tests
 
 on:
   push:
@@ -19,21 +19,15 @@ jobs:
         include:
           # Swift 6.2
           - swift: "6.2"
-            os: ubuntu-24.04
+            os: windows-2025
           - swift: "6.2"
-            os: ubuntu-22.04
+            os: windows-2022
 
           # Swift 6.1
           - swift: "6.1"
-            os: ubuntu-24.04
+            os: windows-2025
           - swift: "6.1"
-            os: ubuntu-22.04
-
-          # Swift 6.0
-          - swift: "6.0"
-            os: ubuntu-24.04
-          - swift: "6.0"
-            os: ubuntu-22.04
+            os: windows-2022
 
     steps:
       - name: Checkout
