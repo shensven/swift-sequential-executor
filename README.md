@@ -14,9 +14,9 @@ Run async tasks one at a time, on schedule or on demand.
 ## What SequentialExecutor Provides
 
 - [x] Runs async tasks on a fixed interval
-- [x] Lets you trigger an async task immediately when needed
-- [x] If the previous task is still running, it won't start another one at the same time and safely handles switching between runs
-- [x] Emits lifecycle events such as started, finished, cancelled, and failed for logging, monitoring, or UI
+- [x] Supports preemptively triggering an immediate async execution
+- [x] Uses a state machine to coordinate interval waiting, async task execution, and immediate trigger requests across different runtime states
+- [x] Provides a state-machine event callback interface for logging, monitoring, or UI integration
 - [x] Full [API Documentation](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
 
 > [!TIP]

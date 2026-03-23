@@ -5,7 +5,7 @@
 
 [English](README.md)｜简体中文
 
-让异步任务逐个执行，可定时运行，也可按需触发。
+让异步任务逐个执行，可定时运行，也可抢占式立即触发。
 
 ## 为什么不直接用 Timer
 
@@ -14,9 +14,9 @@
 ## SequentialExecutor 提供了什么
 
 - [x] 按固定间隔运行异步任务
-- [x] 需要时可以立即触发一次异步任务
-- [x] 如果上一次还没结束，不会同时再跑一个，并会安全切换任务
-- [x] 提供开始、结束、取消、失败等生命周期事件，方便接入日志、监控或 UI
+- [x] 支持抢占式立即执行一次异步任务
+- [x] 通过一个状态机，处理间隔等待、异步任务执行、立即触发请求等不同状态之间的协调
+- [x] 提供状态机的事件回调接口，方便接入日志、监控或 UI
 - [x] 完整的 [API 文档](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
 
 > [!TIP]
