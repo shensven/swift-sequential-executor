@@ -1,6 +1,6 @@
 # ``SequentialExecutor``
 
-A lightweight executor for running async tasks one at a time, on a schedule or immediately.
+A lightweight executor for running async tasks one at a time, on schedule or on demand.
 
 ## Overview
 

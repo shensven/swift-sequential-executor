@@ -5,7 +5,7 @@
 
 English｜[简体中文](README-zh-CN.md)
 
-Run async tasks one at a time, on a schedule or immediately.
+Run async tasks one at a time, on schedule or on demand.
 
 ## Why Not Just Use Timer
 
