@@ -17,6 +17,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Swift 6.3
+          - swift: "6.3"
+            os: macos-26
+
           # Swift 6.2
           - swift: "6.2"
             os: macos-26
