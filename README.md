@@ -210,9 +210,11 @@ sequenceDiagram
 
 ## Example App
 
-The repository includes a SwiftUI example app at [`Examples/SequentialExecutorExample`](Examples/SequentialExecutorExample).
+The repository includes a SwiftUI example app at [`Examples/SequentialExecutorExample`](Examples/SequentialExecutorExample). See the [Example App guide](Examples/README.md) for instructions.
 
 You can use it to debug and observe the runtime behavior of `SequentialExecutor`, including scheduling loop changes, immediate execution, cancellation coordination, and the emission order of lifecycle events. The example keeps visible state event-driven, which makes it easier to inspect waiting and execution timeline changes directly.
+
+![SequentialExecutor example app](Examples/SequentialExecutorExample.png)
 
 ## License
 `swift-sequential-executor` is released under the MIT License. See [LICENSE](LICENSE) for details.
