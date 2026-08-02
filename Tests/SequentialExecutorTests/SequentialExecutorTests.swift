@@ -318,9 +318,14 @@ private extension SequentialExecutor.Event {
         _ = invocations.next()
     }
 
-    await executor.runNow()
+    let result = await executor.runNow()
 
     #expect(invocations.value() == 1)
+    guard case let .finished(context) = result else {
+        Issue.record("Expected the immediate execution to finish successfully.")
+        return
+    }
+    #expect(context.source == .runNow(requestID: 1))
 }
 
 @Test func runNow_passesExecutionContextMatchingLifecycleEvents() async {
@@ -335,7 +340,7 @@ private extension SequentialExecutor.Event {
         }
     )
 
-    await executor.runNow()
+    let result = await executor.runNow()
 
     let capturedContexts = contexts.snapshot()
     let capturedEvents = events.snapshot()
@@ -362,6 +367,11 @@ private extension SequentialExecutor.Event {
     let eventTimes = capturedEvents.map(\.emittedAt)
 
     #expect(context.source == .runNow(requestID: 1))
+    if case let .finished(resultContext) = result {
+        #expect(resultContext == context)
+    } else {
+        Issue.record("Expected runNow() to return the finished execution context.")
+    }
     #expect(startedEvent)
     #expect(finishedEvent)
     #expect(eventTimes == eventTimes.sorted())
@@ -378,9 +388,15 @@ private extension SequentialExecutor.Event {
         }
     )
 
-    await executor.runNow()
+    let result = await executor.runNow()
 
     #expect(events.snapshot().contains(where: { $0.isImmediateExecutionFailed }))
+    guard case let .failed(context, error) = result else {
+        Issue.record("Expected runNow() to return the execution failure.")
+        return
+    }
+    #expect(context.source == .runNow(requestID: 1))
+    #expect(error is StubError)
 }
 
 @Test func eventsStream_receivesImmediateExecutionLifecycleEvents() async {
@@ -466,8 +482,8 @@ private extension SequentialExecutor.Event {
         await executor.runNow()
     }
 
-    await firstRequest.value
-    await secondRequest.value
+    let firstResult = await firstRequest.value
+    let secondResult = await secondRequest.value
 
     let snapshot = events.snapshot()
     let requestedCount = snapshot.filter(\.isRequested).count
@@ -480,6 +496,16 @@ private extension SequentialExecutor.Event {
     #expect(startedCount == 2)
     #expect(cancelledCount == 1)
     #expect(finishedCount == 1)
+    if case let .cancelled(context) = firstResult {
+        #expect(context.source == .runNow(requestID: 1))
+    } else {
+        Issue.record("Expected the first immediate execution to be cancelled.")
+    }
+    if case let .finished(context) = secondResult {
+        #expect(context.source == .runNow(requestID: 2))
+    } else {
+        Issue.record("Expected the replacement immediate execution to finish.")
+    }
 }
 
 @Test func multipleConcurrentRunNow_onlyLatestActuallyRuns() async {
@@ -505,9 +531,9 @@ private extension SequentialExecutor.Event {
     let second = Task { await executor.runNow() }
     let third = Task { await executor.runNow() }
 
-    await first.value
-    await second.value
-    await third.value
+    let firstResult = await first.value
+    let secondResult = await second.value
+    let thirdResult = await third.value
 
     let executionSnapshot = probe.snapshot()
     let eventSnapshot = events.snapshot()
@@ -534,6 +560,22 @@ private extension SequentialExecutor.Event {
     #expect(startedIDs == [1, 3])
     #expect(cancelledIDs == [1])
     #expect(finishedIDs == [3])
+    if case let .cancelled(context) = firstResult {
+        #expect(context.source == .runNow(requestID: 1))
+    } else {
+        Issue.record("Expected the first request to be cancelled after starting.")
+    }
+    if case let .superseded(requestID, byRequestID) = secondResult {
+        #expect(requestID == 2)
+        #expect(byRequestID == 3)
+    } else {
+        Issue.record("Expected the second request to be superseded before starting.")
+    }
+    if case let .finished(context) = thirdResult {
+        #expect(context.source == .runNow(requestID: 3))
+    } else {
+        Issue.record("Expected the latest request to finish.")
+    }
 }
 
 // MARK: Policy and Loop Lifecycle
@@ -686,6 +728,63 @@ private extension SequentialExecutor.Event {
     }
 
     #expect(snapshot != nil)
+}
+
+@Test func stoppingLoopImmediately_preservesLifecycleEventOrder() async {
+    for _ in 0 ..< 50 {
+        let events = EventRecorder()
+        let executor = SequentialExecutor(
+            execute: {},
+            eventHandler: { event in
+                events.record(event)
+            }
+        )
+
+        await executor.updatePolicy(.init(runLoop: .interval(.seconds(60))))
+        await executor.updatePolicy(.init())
+
+        let snapshot = await events.wait { events in
+            events.contains(where: { $0.isLoopExited })
+        }
+        guard let snapshot else {
+            Issue.record("Expected the stopped loop to exit.")
+            return
+        }
+
+        let startedIndex = snapshot.firstIndex(where: { $0.isLoopStarted })
+        let stoppedIndex = snapshot.firstIndex(where: { $0.isLoopStopped })
+        let exitedIndex = snapshot.firstIndex(where: { $0.isLoopExited })
+        #expect(startedIndex != nil)
+        #expect(stoppedIndex != nil)
+        #expect(exitedIndex != nil)
+        if let startedIndex, let stoppedIndex, let exitedIndex {
+            #expect(startedIndex < stoppedIndex)
+            #expect(stoppedIndex < exitedIndex)
+        }
+    }
+}
+
+@Test func scheduledWait_doesNotKeepExecutorAlive() async {
+    let events = EventRecorder()
+    var executor: SequentialExecutor? = SequentialExecutor(
+        execute: {},
+        eventHandler: { event in
+            events.record(event)
+        }
+    )
+    weak let weakExecutor = executor
+
+    await executor?.updatePolicy(.init(runLoop: .interval(.seconds(60))))
+    #expect(await events.wait { events in
+        events.contains(where: { $0.isWaitStarted })
+    } != nil)
+
+    executor = nil
+    for _ in 0 ..< 20 where weakExecutor != nil {
+        await Task.yield()
+    }
+
+    #expect(weakExecutor == nil)
 }
 
 // MARK: Scheduled Execution Behavior

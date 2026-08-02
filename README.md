@@ -106,7 +106,24 @@ let eventTask = Task {
 await executor.runNow()
 ```
 
-`runNow()` returns after the selected immediate execution exits. Errors thrown by `execute` are delivered as `executionFailed` events and are not rethrown by `runNow()`.
+`runNow()` returns a `RunNowResult`, so the caller can distinguish successful,
+cancelled, failed, and superseded requests. Errors thrown by `execute` are returned
+as `.failed` and are also delivered as `executionFailed` events:
+
+```swift
+switch await executor.runNow() {
+case let .finished(context):
+    print("finished: \(context.executionID)")
+case let .cancelled(context):
+    print("cancelled: \(context.executionID)")
+case let .failed(context, error):
+    print("failed: \(context.executionID), \(error)")
+case let .superseded(requestID, byRequestID):
+    print("request \(requestID) was superseded by \(byRequestID)")
+}
+```
+
+Ignoring the result remains supported for fire-and-forget call sites.
 
 If you want to debug fuller runtime behavior, continue with the [Example App](#example-app).
 

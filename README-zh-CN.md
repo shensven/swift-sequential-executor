@@ -106,7 +106,24 @@ let eventTask = Task {
 await executor.runNow()
 ```
 
-`runNow()` 会在选中的立即执行退出后返回。`execute` 抛出的错误会通过 `executionFailed` 事件传递，`runNow()` 本身不会重新抛出该错误。
+`runNow()` 会返回 `RunNowResult`，因此调用方可以区分执行成功、执行取消、
+执行失败，以及尚未开始便被更新请求取代。`execute` 抛出的错误会作为 `.failed`
+结果返回，同时也会通过 `executionFailed` 事件传递：
+
+```swift
+switch await executor.runNow() {
+case let .finished(context):
+    print("执行完成：\(context.executionID)")
+case let .cancelled(context):
+    print("执行取消：\(context.executionID)")
+case let .failed(context, error):
+    print("执行失败：\(context.executionID)，\(error)")
+case let .superseded(requestID, byRequestID):
+    print("请求 \(requestID) 已被请求 \(byRequestID) 取代")
+}
+```
+
+对于不关心结果的触发型调用，也可以继续忽略返回值。
 
 如果你想调试更完整的运行行为，可以继续查看[示例应用](#示例应用)。
 

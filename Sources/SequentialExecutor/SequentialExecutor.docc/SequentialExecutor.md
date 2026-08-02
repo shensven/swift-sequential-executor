@@ -34,7 +34,7 @@ The optional ``EventHandler`` is `@Sendable` and runs synchronously on the
 executor's coordination path. Keep it lightweight. Use ``events()`` when event
 processing needs to run asynchronously or on another actor.
 
-``runNow()`` returns after the selected immediate execution exits. Errors thrown
-by `execute` are reported as
-``Event/Kind/executionFailed(executionID:source:error:)`` events rather than being
-re-thrown to the caller.
+``runNow()`` returns a ``RunNowResult`` after the selected immediate execution
+exits, or as soon as a newer request supersedes it before execution starts. Errors
+thrown by `execute` are returned as ``RunNowResult/failed(_:_:)`` and are also
+reported as ``Event/Kind/executionFailed(executionID:source:error:)`` events.
