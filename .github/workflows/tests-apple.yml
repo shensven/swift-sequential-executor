@@ -54,3 +54,24 @@ jobs:
 
       - name: Test
         run: swift test
+
+  example:
+    name: Swift 6 Example App / macOS 26
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Build example app
+        run: >-
+          xcodebuild
+          -project Examples/SequentialExecutorExample.xcodeproj
+          -scheme SequentialExecutorExample
+          -configuration Debug
+          -destination 'generic/platform=macOS'
+          CODE_SIGNING_ALLOWED=NO
+          build
