@@ -18,7 +18,7 @@ struct PrincipalToolbar: ToolbarContent {
     var body: some ToolbarContent {
         ToolbarItem(placement: .principal) {
             Picker(
-                selection: $selection.animation(),
+                selection: $selection,
                 content: {
                     ForEach(PrincipalCategory.allCases, id: \.self) {
                         Text($0.rawValue.uppercased())
