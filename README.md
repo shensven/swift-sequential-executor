@@ -9,12 +9,12 @@ Run async tasks one at a time, on schedule or on demand.
 
 ## Why Not Just Use Timer
 
-[`Timer.scheduledTimer(...)`](https://developer.apple.com/documentation/foundation/timer/scheduledtimer(withtimeinterval:repeats:block:)) is suitable for requirements like "trigger a callback once after a while." But when that callback needs to perform asynchronous work, callers often still have to deal with the concurrency coordination problems themselves.
+[`Timer.scheduledTimer(...)`](https://developer.apple.com/documentation/foundation/timer/scheduledtimer(withtimeinterval:repeats:block:)) schedules synchronous callbacks. Using it for asynchronous work requires additional coordination to prevent overlap and handle cancellation.
 
 ## What SequentialExecutor Provides
 
-- [x] Runs async tasks on a fixed interval
-- [x] Supports preemptively triggering an immediate async execution
+- [x] Runs async tasks with a fixed delay between executions
+- [x] Supports immediate execution that takes precedence over scheduling
 - [x] Uses a state machine to coordinate interval waiting, async task execution, and immediate trigger requests across different runtime states
 - [x] Provides a state-machine event callback interface for logging, monitoring, or UI integration
 - [x] Full [API Documentation](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
@@ -77,10 +77,11 @@ let executor = SequentialExecutor(
 
 await executor.updatePolicy(.init(runLoop: .interval(.seconds(5))))
 // await executor.runNow()
-
 ```
 
-You can run this from any async context, such as app startup, an async test, or a `Task`. Each time execution begins, the executor passes the current `ExecutionContext` into the `execute` closure; `updatePolicy(_:)` starts fixed-interval scheduling, and `runNow()` triggers an immediate execution.
+Each execution receives an `ExecutionContext` containing its identifier and trigger.
+Use `updatePolicy(_:)` to configure fixed-delay scheduling and `runNow()` to request
+an immediate execution that takes precedence over the scheduled loop.
 
 If you do not need the `execute` parameter to receive a context value from the initializer, you can also use the simpler convenience initializer:
 
@@ -106,9 +107,10 @@ let eventTask = Task {
 await executor.runNow()
 ```
 
-`runNow()` returns a `RunNowResult`, so the caller can distinguish successful,
-cancelled, failed, and superseded requests. Errors thrown by `execute` are returned
-as `.failed` and are also delivered as `executionFailed` events:
+### Immediate Execution Results
+
+`runNow()` returns a `RunNowResult`. Errors thrown by `execute` are returned as
+`.failed` and are also delivered as `executionFailed` events:
 
 ```swift
 switch await executor.runNow() {
@@ -123,19 +125,48 @@ case let .superseded(requestID, byRequestID):
 }
 ```
 
-Ignoring the result remains supported for fire-and-forget call sites.
+| Result | Meaning |
+| --- | --- |
+| `finished` | The request started and completed successfully. |
+| `cancelled` | The request started and ended through cancellation. |
+| `failed` | The request started and threw a non-cancellation error. |
+| `superseded` | A newer request replaced it before it started. |
 
-If you want to debug fuller runtime behavior, continue with the [Example App](#example-app).
+Cancelling the caller's `Task` does not withdraw a request that was submitted to
+the executor. A newer `runNow()` request is what asks the current execution to
+cancel, and cancellation remains cooperative.
+
+The return value is discardable when the caller doesn't need the outcome.
+
+### Event Observation
+
+`events()` observes events emitted after the subscription is created and does not
+replay earlier events. Its default buffer is unbounded. Use
+`events(bufferingPolicy:)` when a bounded buffer is more appropriate; bounded
+buffers may drop events without a separate notification. Correlate loop lifecycle
+events by `loopID`: events for one loop remain ordered, while events from an exiting
+loop and its replacement may interleave.
 
 ## Behavior
 
-From a usage perspective, there are 3 core behaviors to keep in mind:
+`SequentialExecutor` provides these guarantees:
 
 - Only one async task runs at a time
-- Tasks can run on a fixed interval or be triggered immediately when needed
-- When a new task needs to take over, the current task is asked to exit through cooperative task cancellation instead of being interrupted forcefully
+- Scheduled tasks use a fixed delay and can also be triggered immediately when needed
+- When a new task takes over, the current task exits through cooperative cancellation
 
-If you only care about integrating it into your project, this is usually enough. If you want to understand the full state machine design, continue with the coordination model and handoff flow below.
+### Scheduling Semantics
+
+Scheduled execution uses fixed-delay rather than fixed-rate semantics:
+
+```text
+wait interval → execute → wait interval → execute
+```
+
+- Enabling scheduling waits for one full interval before the first execution.
+- The next interval begins only after the previous execution exits, so execution time is not subtracted from the delay.
+- Disabling scheduling cancels an active wait, but lets an execution that has already started exit normally.
+- Changing the interval restarts an active wait. If an execution is already running, the new delay is applied after it exits.
 
 <details>
 <summary>Coordination Model</summary>
@@ -174,7 +205,7 @@ flowchart TD
     ImmediateExecution -->|A newer immediate request arrives| ImmediateRequestPending
 ```
 
-- If the interval is updated while in `Waiting`, the executor remains in `Waiting`
+- If the interval is updated while in `Waiting`, the executor remains in the abstract `Waiting` state, but cancels the old wait and starts a new one
 - If a newer immediate request arrives while in `ImmediateRequestPending`, the state does not change, but the older pending request yields to the newest one
 
 </details>
@@ -182,9 +213,7 @@ flowchart TD
 <details>
 <summary>Handoff Flow</summary>
 
-When you trigger an immediate run, the executor does not pile a new task on top of the current one. It first clears the current state, then hands control over to the new run.
-
-More specifically:
+An immediate request performs a cooperative handoff instead of starting concurrent work:
 
 - If the executor is still waiting for the next scheduled trigger, that wait ends first
 - If a task is already running, the executor asks it to exit safely through cooperative cancellation

@@ -5,16 +5,16 @@
 
 [English](README.md)｜简体中文
 
-让异步任务逐个执行，可定时运行，也可抢占式立即触发。
+让异步任务逐个执行，可按固定延迟运行，也可立即触发并优先于定时任务。
 
 ## 为什么不直接用 Timer
 
-[`Timer.scheduledTimer(...)`](https://developer.apple.com/documentation/foundation/timer/scheduledtimer(withtimeinterval:repeats:block:)) 适合“过一会儿再触发一次回调”这类需求。但当回调内部需要执行异步任务时，调用方往往还需要自己处理可能会遇到的并发协调问题。
+[`Timer.scheduledTimer(...)`](https://developer.apple.com/documentation/foundation/timer/scheduledtimer(withtimeinterval:repeats:block:)) 用于调度同步回调。用它执行异步工作时，还需要额外处理任务重叠和取消协调。
 
 ## SequentialExecutor 提供了什么
 
-- [x] 按固定间隔运行异步任务
-- [x] 支持抢占式立即执行一次异步任务
+- [x] 按固定延迟依次运行异步任务
+- [x] 支持优先于定时调度的立即执行
 - [x] 通过一个状态机，处理间隔等待、异步任务执行、立即触发请求等不同状态之间的协调
 - [x] 提供状态机的事件回调接口，方便接入日志、监控或 UI
 - [x] 完整的 [API 文档](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
@@ -77,10 +77,10 @@ let executor = SequentialExecutor(
 
 await executor.updatePolicy(.init(runLoop: .interval(.seconds(5))))
 // await executor.runNow()
-
 ```
 
-这段代码可以放在任意异步上下文中运行，例如应用启动流程、异步测试，或者一个 `Task` 里。每次执行开始时，执行器都会把当前的 `ExecutionContext` 传给 `execute` 闭包；`updatePolicy(_:)` 用来开启固定间隔调度，`runNow()` 用来发起一次立即执行。
+每次执行都会收到包含执行标识和触发来源的 `ExecutionContext`。使用
+`updatePolicy(_:)` 配置固定延迟调度；使用 `runNow()` 请求一次优先于定时任务的立即执行。
 
 如果你不需要让初始化器里的 `execute` 参数接收上下文值，也可以使用一个更简洁的便利初始化器：
 
@@ -106,9 +106,10 @@ let eventTask = Task {
 await executor.runNow()
 ```
 
-`runNow()` 会返回 `RunNowResult`，因此调用方可以区分执行成功、执行取消、
-执行失败，以及尚未开始便被更新请求取代。`execute` 抛出的错误会作为 `.failed`
-结果返回，同时也会通过 `executionFailed` 事件传递：
+### 立即执行结果
+
+`runNow()` 返回 `RunNowResult`。`execute` 抛出的错误会作为 `.failed` 结果返回，
+同时也会通过 `executionFailed` 事件传递：
 
 ```swift
 switch await executor.runNow() {
@@ -123,19 +124,45 @@ case let .superseded(requestID, byRequestID):
 }
 ```
 
-对于不关心结果的触发型调用，也可以继续忽略返回值。
+| 结果 | 含义 |
+| --- | --- |
+| `finished` | 请求已经开始，并成功完成。 |
+| `cancelled` | 请求已经开始，随后通过取消退出。 |
+| `failed` | 请求已经开始，并抛出了非取消错误。 |
+| `superseded` | 请求尚未开始，就被更新请求取代。 |
 
-如果你想调试更完整的运行行为，可以继续查看[示例应用](#示例应用)。
+取消调用方的 `Task` 不会撤回已经提交给执行器的请求。新的 `runNow()` 请求才会
+请求当前执行通过协作式取消退出。
+
+调用方不需要处理结果时，可以忽略返回值。
+
+### 事件观察
+
+`events()` 只观察订阅创建之后发出的事件，不会重放历史事件。其默认缓冲区没有
+容量上限；需要限制缓冲时，可以使用 `events(bufferingPolicy:)`，但有界缓冲可能丢弃
+事件，并且不会额外发出丢弃通知。处理循环生命周期时应使用 `loopID` 关联事件：
+同一个循环内的事件保持有序，但正在退出的旧循环与替代它的新循环之间可能交错。
 
 ## 行为概览
 
-从使用角度看，可以先记住 3 个核心行为：
+`SequentialExecutor` 提供以下保证：
 
 - 同一时间只会运行一个异步任务
-- 可以按固定间隔运行，也可以随时立即触发
-- 当新任务需要接管时，会先请求当前任务通过协作式取消（cooperative task cancellation）安全退出，而不是直接打断它
+- 定时任务按固定延迟运行，也可以随时立即触发
+- 新任务接管时，当前任务通过协作式取消（cooperative cancellation）退出
 
-如果你现在只关心怎样把它接入到项目里，读到这里通常已经足够；如果你还想进一步理解完整的状态机设计，可以继续看下面的协调模型和轮替流程。
+### 调度语义
+
+定时执行采用固定延迟（fixed-delay），而不是固定频率（fixed-rate）：
+
+```text
+等待 interval → 执行 → 等待 interval → 执行
+```
+
+- 启用定时后，会先完整等待一个 interval，再开始第一次执行。
+- 上一次执行退出后才开始下一次等待，执行耗时不会从延迟中扣除。
+- 禁用定时会取消正在进行的等待，但不会取消已经开始的执行。
+- 修改 interval 会重新开始当前等待；如果任务正在执行，新延迟会在任务退出后生效。
 
 <details>
 <summary>协调模型</summary>
@@ -174,7 +201,7 @@ flowchart TD
     ImmediateExecution -->|收到新的立即触发请求| ImmediateRequestPending
 ```
 
-- 在 `Waiting` 中更新定时间隔后，状态仍然保持在 `Waiting`
+- 在 `Waiting` 中更新定时间隔后，抽象状态仍然是 `Waiting`，但旧等待会被取消并重新开始
 - 在 `ImmediateRequestPending` 中如果又收到新的立即触发请求，状态不变，但较早的待处理请求会让位给最新请求
 
 </details>
@@ -182,9 +209,7 @@ flowchart TD
 <details>
 <summary>轮替流程</summary>
 
-当你发起一次立即触发时，执行器不会把新任务直接叠加到当前任务上，而是先把当前状态整理好，再把控制权交给新的那次运行，也就是一次任务接管。
-
-更具体地说：
+立即请求通过协作式接管执行，不会与当前任务并行：
 
 - 如果当前还在等待下一次定时触发，这段等待会先结束
 - 如果当前已经有任务在运行，执行器会先请求它通过协作式取消（cooperative cancellation）安全退出

@@ -7,18 +7,20 @@ import Foundation
 
 /// Runs one execution at a time.
 ///
-/// A scheduled loop waits for the configured interval, executes once, waits again,
-/// and never overlaps with another execution.
+/// Scheduled work uses fixed-delay semantics: the loop waits for the configured
+/// interval, executes once, and starts the next wait only after that execution exits.
+/// Enabling scheduling does not execute immediately, and executions never overlap.
 ///
-/// `runNow()` has higher priority than the scheduled loop. It stops the current
-/// loop, cancels any in-flight execution, runs a new immediate execution, and then
-/// lets the loop resume from a clean state.
+/// `runNow()` takes precedence over the scheduled loop. It stops the current
+/// loop, requests cancellation of any in-flight execution, and coordinates a new
+/// immediate execution. When requests race, the newest pending request takes over.
+/// The scheduled loop resumes afterward when its policy remains enabled.
 ///
 /// The public surface is intentionally small:
 /// - `execute` defines the unit of work.
 /// - `eventHandler` observes lifecycle events in emission order.
 /// - `updatePolicy(_:)` controls the scheduled loop.
-/// - `runNow()` requests a higher-priority immediate execution.
+/// - `runNow()` requests an immediate execution that takes precedence over scheduling.
 public actor SequentialExecutor {
     /// Reports the executor's observable lifecycle.
     ///
@@ -29,6 +31,7 @@ public actor SequentialExecutor {
     /// - loop lifecycle
     /// - loop waiting
     public struct Event: Sendable {
+        /// Identifies a lifecycle transition.
         public enum Kind: Sendable {
             /// Reports that a caller requested an immediate execution.
             case requested(requestID: UInt)
@@ -48,10 +51,16 @@ public actor SequentialExecutor {
             case policyUpdated(previous: Policy, new: Policy)
 
             /// Reports that a new scheduled loop started.
+            ///
+            /// For a given `loopID`, this event is emitted before any waiting,
+            /// stopping, or exit event.
             case loopStarted(loopID: UUID)
             /// Reports that the current scheduled loop was asked to stop.
             case loopStopped(loopID: UUID, reason: LoopStopReason)
             /// Reports that the scheduled loop fully exited.
+            ///
+            /// Events from different loop identifiers may interleave. In particular,
+            /// an old loop can exit after its replacement has already started.
             case loopExited(loopID: UUID)
 
             /// Reports that the loop started waiting for the next interval.
@@ -69,6 +78,11 @@ public actor SequentialExecutor {
         /// The lifecycle payload emitted at `emittedAt`.
         public let kind: Kind
 
+        /// Creates a lifecycle event.
+        ///
+        /// - Parameters:
+        ///   - emittedAt: The event's emission time.
+        ///   - kind: The lifecycle transition represented by the event.
         public init(emittedAt: Date = .now, kind: Kind) {
             self.emittedAt = emittedAt
             self.kind = kind
@@ -100,6 +114,11 @@ public actor SequentialExecutor {
         /// The same source appears in the matching execution lifecycle events.
         public let source: ExecutionSource
 
+        /// Creates an execution context.
+        ///
+        /// - Parameters:
+        ///   - executionID: The identifier for this execution.
+        ///   - source: The trigger that started this execution.
         public init(executionID: UUID, source: ExecutionSource) {
             self.executionID = executionID
             self.source = source
@@ -107,12 +126,18 @@ public actor SequentialExecutor {
     }
 
     /// Reports how an immediate execution request completed.
+    ///
+    /// A request that has already started ends as `finished`, `cancelled`, or
+    /// `failed`. Only a request replaced before it starts ends as `superseded`.
     public enum RunNowResult: Sendable {
         /// The requested execution finished successfully.
         case finished(ExecutionContext)
-        /// The requested execution started, then was cancelled.
+        /// The requested execution started, then ended through cancellation.
+        ///
+        /// This includes cooperative task cancellation and a `CancellationError`
+        /// thrown by the execution closure.
         case cancelled(ExecutionContext)
-        /// The requested execution failed with an error.
+        /// The requested execution started, then failed with a non-cancellation error.
         case failed(ExecutionContext, any Error & Sendable)
         /// A newer immediate request replaced this request before it started.
         case superseded(requestID: UInt, byRequestID: UInt)
@@ -130,12 +155,19 @@ public actor SequentialExecutor {
 
     /// Controls whether the scheduled loop should run and how long it waits.
     public struct Policy: Sendable, Equatable {
-        /// Describes whether the loop is disabled or running with an interval.
+        /// Describes whether the loop is disabled or running with a fixed delay.
         public enum RunLoop: Sendable, Equatable {
+            /// Disables future scheduled executions.
             case disabled
+            /// Waits for the duration before each scheduled execution.
+            ///
+            /// The duration must be greater than zero. The first execution waits for
+            /// one full duration, and each later wait starts after the prior execution
+            /// exits. This is fixed-delay scheduling rather than fixed-rate scheduling.
             case interval(Duration)
         }
 
+        /// The scheduled loop configuration.
         public private(set) var runLoop: RunLoop = .disabled
 
         /// Creates a loop policy.
@@ -164,8 +196,12 @@ public actor SequentialExecutor {
         /// Buffers every event until the consumer receives it.
         case unbounded
         /// Buffers the oldest `limit` events and drops new events while the buffer is full.
+        ///
+        /// `limit` must be nonnegative. Dropped events are not reported separately.
         case bufferingOldest(Int)
         /// Buffers the newest `limit` events and drops the oldest buffered event first.
+        ///
+        /// `limit` must be nonnegative. Dropped events are not reported separately.
         case bufferingNewest(Int)
     }
 
@@ -238,7 +274,10 @@ public actor SequentialExecutor {
 public extension SequentialExecutor {
     /// Applies a new loop policy.
     ///
-    /// Updating the policy may start, stop, or restart the scheduled loop.
+    /// Updating the policy may start, stop, or restart the scheduled loop. Disabling
+    /// or changing the policy cancels an active interval wait, but does not cancel an
+    /// execution that has already started. That execution is allowed to exit before
+    /// the executor applies the next scheduled wait.
     func updatePolicy(_ policy: Policy) {
         reconcile(with: policy)
     }
@@ -257,6 +296,10 @@ public extension SequentialExecutor {
     /// a newer request supersedes it before execution starts. Errors thrown by `execute`
     /// are returned as ``RunNowResult/failed(_:_:)`` and are also reported through
     /// ``Event/Kind/executionFailed(executionID:source:error:)``.
+    ///
+    /// - Important: Cancelling the caller's task does not withdraw the request or
+    ///   cancel the executor's work. A newer `runNow()` request asks the current
+    ///   execution to cancel.
     @discardableResult
     func runNow() async -> RunNowResult {
         await runImmediately()
@@ -264,16 +307,19 @@ public extension SequentialExecutor {
 
     /// Returns an async sequence view of the executor lifecycle events.
     ///
-    /// The stream observes the same `Event` values emitted to `eventHandler`, using
-    /// an unbounded buffer.
+    /// The stream observes future `Event` values emitted after this subscription is
+    /// created; it does not replay earlier events. It uses an unbounded buffer, so a
+    /// subscriber that cannot keep up can retain an increasing number of events.
     func events() -> AsyncStream<Event> {
         events(bufferingPolicy: .unbounded)
     }
 
     /// Returns an async sequence view of the executor lifecycle events.
     ///
-    /// The stream observes the same `Event` values emitted to `eventHandler`, but
-    /// delivers them asynchronously according to the provided buffering policy.
+    /// The stream observes future `Event` values emitted after this subscription is
+    /// created; it does not replay earlier events. It delivers them asynchronously
+    /// according to the provided buffering policy. Bounded policies may drop events
+    /// without emitting an additional notification.
     func events(bufferingPolicy: EventBufferingPolicy) -> AsyncStream<Event> {
         let subscriberID = UUID()
         var continuation: AsyncStream<Event>.Continuation?
