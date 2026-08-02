@@ -772,7 +772,7 @@ private extension SequentialExecutor.Event {
             events.record(event)
         }
     )
-    weak let weakExecutor = executor
+    let executorReference = { [weak executor] in executor }
 
     await executor?.updatePolicy(.init(runLoop: .interval(.seconds(60))))
     #expect(await events.wait { events in
@@ -780,11 +780,11 @@ private extension SequentialExecutor.Event {
     } != nil)
 
     executor = nil
-    for _ in 0 ..< 20 where weakExecutor != nil {
+    for _ in 0 ..< 20 where executorReference() != nil {
         await Task.yield()
     }
 
-    #expect(weakExecutor == nil)
+    #expect(executorReference() == nil)
 }
 
 // MARK: Scheduled Execution Behavior
