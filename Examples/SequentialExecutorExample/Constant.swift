@@ -11,4 +11,7 @@ enum Constant {
     static let windowWidth: CGFloat = 800
     static let windowHeight: CGFloat = 688
     static let eventWidth: CGFloat = windowWidth * 0.5
+    static let documentationURL = URL(
+        string: "https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor"
+    )!
 }

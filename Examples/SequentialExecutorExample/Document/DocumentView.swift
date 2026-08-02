@@ -9,10 +9,19 @@ import SwiftUI
 
 struct DocumentView: View {
     var body: some View {
-        HStack {
-            Image(systemName: "laurel.leading")
+        VStack {
+            ContentUnavailableView {
+                Label("SequentialExecutor", systemImage: "book.pages")
+            } description: {
+                Text("Explore the complete API reference and usage guides online.")
+            } actions: {
+                Link("Open Documentation", destination: Constant.documentationURL).buttonStyle(.borderedProminent)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+
             Text("Made with ❤️ in Kunming by Sven")
-            Image(systemName: "laurel.trailing")
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+                .padding()
         }
     }
 }
