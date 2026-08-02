@@ -528,12 +528,12 @@ private extension SequentialExecutor.Event {
         events.contains(where: { $0.isImmediateExecutionStarted })
     } != nil)
 
-    let second = Task { await executor.runNow() }
-    let third = Task { await executor.runNow() }
+    let concurrentRequestA = Task { await executor.runNow() }
+    let concurrentRequestB = Task { await executor.runNow() }
 
     let firstResult = await first.value
-    let secondResult = await second.value
-    let thirdResult = await third.value
+    let concurrentResultA = await concurrentRequestA.value
+    let concurrentResultB = await concurrentRequestB.value
 
     let executionSnapshot = probe.snapshot()
     let eventSnapshot = events.snapshot()
@@ -565,16 +565,14 @@ private extension SequentialExecutor.Event {
     } else {
         Issue.record("Expected the first request to be cancelled after starting.")
     }
-    if case let .superseded(requestID, byRequestID) = secondResult {
+    switch (concurrentResultA, concurrentResultB) {
+    case let (.superseded(requestID, byRequestID), .finished(context)),
+         let (.finished(context), .superseded(requestID, byRequestID)):
         #expect(requestID == 2)
         #expect(byRequestID == 3)
-    } else {
-        Issue.record("Expected the second request to be superseded before starting.")
-    }
-    if case let .finished(context) = thirdResult {
         #expect(context.source == .runNow(requestID: 3))
-    } else {
-        Issue.record("Expected the latest request to finish.")
+    default:
+        Issue.record("Expected one concurrent request to be superseded and the latest request to finish.")
     }
 }
 
