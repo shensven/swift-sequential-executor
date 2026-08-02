@@ -75,6 +75,12 @@ public actor SequentialExecutor {
         }
     }
 
+    /// Observes lifecycle events synchronously on the executor's coordination path.
+    ///
+    /// Handlers must be safe to transfer across isolation domains. Keep handlers
+    /// lightweight and use ``events()`` for actor-isolated or asynchronous work.
+    public typealias EventHandler = @Sendable (Event) -> Void
+
     /// Describes what triggered an execution.
     public enum ExecutionSource: Sendable, Equatable {
         /// Identifies an explicit `runNow()` request.
@@ -145,16 +151,16 @@ public actor SequentialExecutor {
     public enum EventBufferingPolicy: Sendable, Equatable {
         /// Buffers every event until the consumer receives it.
         case unbounded
-        /// Buffers at most `limit` events and drops the oldest buffered event first.
+        /// Buffers the oldest `limit` events and drops new events while the buffer is full.
         case bufferingOldest(Int)
-        /// Buffers at most `limit` events and keeps the newest buffered event.
+        /// Buffers the newest `limit` events and drops the oldest buffered event first.
         case bufferingNewest(Int)
     }
 
     // MARK: Stored Properties
 
     private let execute: @Sendable (ExecutionContext) async throws -> Void
-    private let eventHandler: ((Event) -> Void)?
+    private let eventHandler: EventHandler?
     private let clock = ContinuousClock()
     private var eventContinuations: [UUID: AsyncStream<Event>.Continuation] = [:]
 
@@ -182,13 +188,14 @@ public actor SequentialExecutor {
     ///     current task and then waits for this closure to return. If the closure does
     ///     not observe cancellation, the replacement execution cannot start promptly.
     ///   - eventHandler: An optional observer for lifecycle events.
-    ///     The executor invokes this callback synchronously on its coordination path
-    ///     in the same order the events are emitted. Keep the handler lightweight and
-    ///     non-blocking. If the observer needs heavier work, hand the event off to
-    ///     another queue or task from inside the callback.
+    ///     The executor invokes this `@Sendable` callback synchronously on its
+    ///     coordination path in the same order the events are emitted. The handler
+    ///     cannot synchronously access state isolated elsewhere, such as MainActor UI
+    ///     state. Keep it lightweight and use ``events()`` for isolated or asynchronous
+    ///     event processing.
     public init(
         execute: @escaping @Sendable (ExecutionContext) async throws -> Void,
-        eventHandler: ((Event) -> Void)? = nil
+        eventHandler: EventHandler? = nil
     ) {
         self.execute = execute
         self.eventHandler = eventHandler
@@ -197,7 +204,7 @@ public actor SequentialExecutor {
     /// Convenience overload for work that does not need `ExecutionContext`.
     public init(
         execute: @escaping @Sendable () async throws -> Void,
-        eventHandler: ((Event) -> Void)? = nil
+        eventHandler: EventHandler? = nil
     ) {
         self.init(
             execute: { _ in
@@ -233,6 +240,10 @@ public extension SequentialExecutor {
     /// coordination completes. Cancellation remains cooperative: this method requests
     /// cancellation of the in-flight execution and waits for it to return; it does not
     /// forcibly terminate non-cooperative work.
+    ///
+    /// This method returns after the selected immediate execution exits. Errors thrown
+    /// by `execute` are reported through ``Event/Kind/executionFailed(executionID:source:error:)``
+    /// and are not rethrown to the caller.
     func runNow() async {
         await runImmediately()
     }

@@ -90,7 +90,7 @@ let executor = SequentialExecutor {
 }
 ```
 
-Note: if event handling itself is heavier work, or if you would rather consume events as an async stream, you can subscribe through `events()` instead:
+The event handler is `@Sendable` and runs synchronously on the executor's coordination path. Keep it lightweight, and do not synchronously access state isolated elsewhere, such as MainActor UI state. For isolated or asynchronous event processing, subscribe through `events()` instead:
 
 ```swift
 let executor = SequentialExecutor {
@@ -105,6 +105,8 @@ let eventTask = Task {
 
 await executor.runNow()
 ```
+
+`runNow()` returns after the selected immediate execution exits. Errors thrown by `execute` are delivered as `executionFailed` events and are not rethrown by `runNow()`.
 
 If you want to debug fuller runtime behavior, continue with the [Example App](#example-app).
 

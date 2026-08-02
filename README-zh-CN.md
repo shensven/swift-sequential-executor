@@ -90,7 +90,7 @@ let executor = SequentialExecutor {
 }
 ```
 
-注意：如果事件处理本身比较重，或者更希望以异步流的方式消费事件，也可以通过 `events()` 订阅：
+`eventHandler` 是 `@Sendable` 闭包，并且会在执行器的协调路径上同步调用。请保持处理逻辑轻量，不要在其中同步访问其他隔离域的状态，例如 MainActor UI 状态。需要隔离或异步处理事件时，请通过 `events()` 订阅：
 
 ```swift
 let executor = SequentialExecutor {
@@ -105,6 +105,8 @@ let eventTask = Task {
 
 await executor.runNow()
 ```
+
+`runNow()` 会在选中的立即执行退出后返回。`execute` 抛出的错误会通过 `executionFailed` 事件传递，`runNow()` 本身不会重新抛出该错误。
 
 如果你想调试更完整的运行行为，可以继续查看[示例应用](#示例应用)。
 

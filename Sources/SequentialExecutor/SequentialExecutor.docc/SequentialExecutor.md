@@ -29,3 +29,12 @@ await executor.updatePolicy(.init(runLoop: .interval(.seconds(5))))
 ```
 
 If you only need scheduled execution, updating the policy is enough. If you also need to trigger a run immediately, call ``runNow()``.
+
+The optional ``EventHandler`` is `@Sendable` and runs synchronously on the
+executor's coordination path. Keep it lightweight. Use ``events()`` when event
+processing needs to run asynchronously or on another actor.
+
+``runNow()`` returns after the selected immediate execution exits. Errors thrown
+by `execute` are reported as
+``Event/Kind/executionFailed(executionID:source:error:)`` events rather than being
+re-thrown to the caller.

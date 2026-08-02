@@ -126,7 +126,7 @@ struct PlaygroundView: View {
                     content: {
                         Toggle("Random Duration", isOn: Binding(
                             get: { vm.nextExecutionStrategy.usesRandomDuration },
-                            set: vm.setNextExecutionUsesRandomDuration
+                            set: { vm.setNextExecutionUsesRandomDuration($0) }
                         ))
 
                         Slider(
@@ -216,7 +216,7 @@ struct PlaygroundView: View {
                 LogToolbar(
                     logLimit: Binding(
                         get: { vm.logLimit },
-                        set: vm.setLogLimit
+                        set: { vm.setLogLimit($0) }
                     ),
                     onClear: vm.clearEventHistory
                 )

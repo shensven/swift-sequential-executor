@@ -556,14 +556,14 @@ private struct CountdownState {
 }
 
 private extension Duration {
-    var millisecondsValue: Int {
+    nonisolated var millisecondsValue: Int {
         let components = components
         return Int(components.seconds) * 1000 + Int(components.attoseconds) / 1_000_000_000_000_000
     }
 }
 
 private extension SequentialExecutor.Event.Kind {
-    var title: String {
+    nonisolated var title: String {
         switch self {
         case let .requested(requestID): "requested #\(requestID)"
         case .executionStarted: "executionStarted"
@@ -581,7 +581,7 @@ private extension SequentialExecutor.Event.Kind {
         }
     }
 
-    var detail: String {
+    nonisolated var detail: String {
         switch self {
         case let .requested(requestID):
             "requestID: \(requestID)"
@@ -610,7 +610,7 @@ private extension SequentialExecutor.Event.Kind {
 }
 
 private extension SequentialExecutor.Policy {
-    var description: String {
+    nonisolated var description: String {
         switch runLoop {
         case .disabled: return "disabled"
         case let .interval(interval): return "interval: \(interval.millisecondsValue)ms"
@@ -619,7 +619,7 @@ private extension SequentialExecutor.Policy {
 }
 
 private extension SequentialExecutor.ExecutionSource {
-    var description: String {
+    nonisolated var description: String {
         switch self {
         case let .runNow(requestID): "runNow #\(requestID)"
         case let .scheduledLoop(loopID): "scheduledLoop \(loopID.shortID)"
@@ -628,7 +628,7 @@ private extension SequentialExecutor.ExecutionSource {
 }
 
 private extension SequentialExecutor.LoopStopReason {
-    var description: String {
+    nonisolated var description: String {
         switch self {
         case .runNowRequested: "runNowRequested"
         case .policyDisabled: "policyDisabled"
@@ -638,7 +638,7 @@ private extension SequentialExecutor.LoopStopReason {
 }
 
 private extension UUID {
-    var shortID: String {
+    nonisolated var shortID: String {
         String(uuidString.suffix(8))
     }
 }
