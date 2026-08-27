@@ -38,11 +38,11 @@ Run async tasks one at a time, on schedule or on demand.
 
 Once your Swift package or Xcode project is set up, add `swift-sequential-executor` to `dependencies` in `Package.swift`, or add it to the package dependency list in Xcode.
 
-Add version `1.1.1` or later:
+Add version `1.1.2` or later:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/shensven/swift-sequential-executor.git", from: "1.1.1")
+    .package(url: "https://github.com/shensven/swift-sequential-executor.git", from: "1.1.2")
 ]
 ```
 
