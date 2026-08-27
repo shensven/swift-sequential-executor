@@ -480,6 +480,14 @@ private extension SequentialExecutor {
         let requestID = latestImmediateExecutionRequestID
         emit(.requested(requestID: requestID))
         pendingImmediateExecutionCount += 1
+        // Every accepted request contributes exactly once to the handoff count.
+        // Reconcile from one shared exit path because actor continuations waiting on
+        // different executions may resume in any order.
+        defer {
+            precondition(pendingImmediateExecutionCount > 0)
+            pendingImmediateExecutionCount -= 1
+            reconcileLoopTask()
+        }
 
         // Latest request wins. Stop the loop, cancel the current execution if needed,
         // and replace it with a new immediate execution.
@@ -490,21 +498,12 @@ private extension SequentialExecutor {
         // may have already been queued. Only the latest request should proceed;
         // older requests yield to avoid parallel executions.
         guard latestImmediateExecutionRequestID == requestID else {
-            pendingImmediateExecutionCount -= 1
-            // The newest request can finish before older, superseded callers resume.
-            // Reconcile on every pending-count transition so the last caller leaving
-            // this handoff cannot strand an enabled scheduled loop in the idle state.
-            reconcileLoopTask()
             return .superseded(requestID: requestID, byRequestID: latestImmediateExecutionRequestID)
         }
 
         let task = startExecution(source: .runNow(requestID: requestID))
         let completion = await task.value
 
-        pendingImmediateExecutionCount -= 1
-        if latestImmediateExecutionRequestID == requestID {
-            reconcileLoopTask()
-        }
         return RunNowResult(completion)
     }
 
