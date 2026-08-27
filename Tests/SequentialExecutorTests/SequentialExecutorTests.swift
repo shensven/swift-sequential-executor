@@ -399,6 +399,35 @@ private extension SequentialExecutor.Event {
     #expect(error is StubError)
 }
 
+@Test func cancellingRunNowCaller_doesNotWithdrawAcceptedExecution() async {
+    let events = EventRecorder()
+    let executor = SequentialExecutor(
+        execute: {
+            try await Task.sleep(for: .milliseconds(50))
+        },
+        eventHandler: { event in
+            events.record(event)
+        }
+    )
+
+    let caller = Task {
+        await executor.runNow()
+    }
+
+    #expect(await events.wait { events in
+        events.contains(where: \.isImmediateExecutionStarted)
+    } != nil)
+
+    caller.cancel()
+    let result = await caller.value
+
+    guard case .finished = result else {
+        Issue.record("Expected accepted work to finish independently of caller cancellation.")
+        return
+    }
+    #expect(!events.snapshot().contains(where: { $0.isImmediateExecutionCancelled }))
+}
+
 @Test func eventsStream_receivesImmediateExecutionLifecycleEvents() async {
     let events = EventRecorder()
     let executor = SequentialExecutor(execute: {})
@@ -573,6 +602,34 @@ private extension SequentialExecutor.Event {
         #expect(context.source == .runNow(requestID: 3))
     default:
         Issue.record("Expected one concurrent request to be superseded and the latest request to finish.")
+    }
+}
+
+@Test func multipleConcurrentRunNow_resumeEnabledLoopAfterEveryRequestSettles() async {
+    // Repeat the handoff because the regression depends on actor continuation order:
+    // the newest request can finish before an older request records `.superseded`.
+    for _ in 0 ..< 250 {
+        let events = EventRecorder()
+        let executor = SequentialExecutor(
+            execute: { await Task.yield() },
+            eventHandler: { event in
+                events.record(event)
+            }
+        )
+
+        await executor.updatePolicy(.init(runLoop: .interval(.seconds(60))))
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0 ..< 20 {
+                group.addTask {
+                    _ = await executor.runNow()
+                }
+            }
+        }
+
+        let loopStartCount = events.snapshot().filter(\.isLoopStarted).count
+        #expect(loopStartCount >= 2)
+        await executor.updatePolicy(.init())
     }
 }
 

@@ -491,6 +491,10 @@ private extension SequentialExecutor {
         // older requests yield to avoid parallel executions.
         guard latestImmediateExecutionRequestID == requestID else {
             pendingImmediateExecutionCount -= 1
+            // The newest request can finish before older, superseded callers resume.
+            // Reconcile on every pending-count transition so the last caller leaving
+            // this handoff cannot strand an enabled scheduled loop in the idle state.
+            reconcileLoopTask()
             return .superseded(requestID: requestID, byRequestID: latestImmediateExecutionRequestID)
         }
 

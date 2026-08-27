@@ -54,6 +54,23 @@ Cancelling the caller's task does not withdraw a submitted request. A newer
 ``SequentialExecutor/runNow()`` request asks the current execution to cancel,
 and that cancellation remains cooperative.
 
+### Ownership and Lifetime
+
+Use `SequentialExecutor` when a long-lived service or model owns a fixed-delay
+schedule and also needs latest-request-wins immediate execution. A view-scoped
+loop that should end automatically when a SwiftUI view disappears is often
+simpler as a structured `.task(id:)` loop using `Clock.sleep(for:)`.
+
+The executor intentionally owns accepted work independently of the caller.
+Cancelling a `.task` or `.refreshable` caller does not withdraw an accepted
+``SequentialExecutor/runNow()`` request. The `execute` closure must cooperate
+with cancellation; a non-cooperative API or unstructured child task can delay
+handoff to a newer immediate request.
+
+Independent tasks calling ``SequentialExecutor/updatePolicy(_:)`` race in actor
+arrival order, which need not match task creation order. Give policy updates one
+owner or serialize them at the call site.
+
 ### Scheduling Semantics
 
 The scheduled loop uses fixed-delay rather than fixed-rate semantics:

@@ -136,6 +136,23 @@ case let .superseded(requestID, byRequestID):
 
 调用方不需要处理结果时，可以忽略返回值。
 
+### 选择合适的生命周期
+
+`SequentialExecutor` 适合由长生命周期服务或模型持有，并且同时需要固定延迟调度和
+“最新立即请求接管”语义的场景。执行器应该存放在真正拥有调度策略的对象中。
+
+如果循环生命周期与单个 SwiftUI View 完全一致，使用 `.task(id:)` 配合
+`Clock.sleep(for:)` 的结构化循环通常更简单：View 消失时 SwiftUI 会自动取消任务。
+`SequentialExecutor` 会在请求提交后自行持有工作，因此取消 `.task` 或 `.refreshable`
+的调用方，不会停止一个已经被 `runNow()` 接受的请求。
+
+`execute` 闭包必须及时响应协作式取消。如果它正在等待一个非结构化子任务，或者等待
+不会响应取消的 API，新的 `runNow()` 请求就只能等到旧工作返回后才能接管。
+
+从多个独立 Task 调用 `updatePolicy(_:)` 时，策略按照 actor 实际收到调用的顺序应用，
+这个顺序不保证与 Task 创建顺序一致。应让一个对象统一拥有策略更新，或者在调用方显式
+串行化；不要从互不相关的 Task 竞争式地 fire-and-forget 更新策略。
+
 ### 事件观察
 
 `events()` 只观察订阅创建之后发出的事件，不会重放历史事件。其默认缓冲区没有

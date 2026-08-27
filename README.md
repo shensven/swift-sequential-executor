@@ -138,6 +138,27 @@ cancel, and cancellation remains cooperative.
 
 The return value is discardable when the caller doesn't need the outcome.
 
+### Choosing the Right Lifetime
+
+`SequentialExecutor` is a good fit for a long-lived scheduler that needs both
+fixed-delay execution and latest-request-wins handoff. Keep the executor in the
+service or model that owns that scheduling policy.
+
+For a loop whose lifetime exactly matches one SwiftUI view, a structured
+`.task(id:)` loop with `Clock.sleep(for:)` is often simpler: SwiftUI cancels the
+task when the view disappears. `SequentialExecutor` intentionally owns its work
+after submission, so cancellation of a `.task` or `.refreshable` caller does not
+stop an accepted `runNow()` request.
+
+The `execute` closure must respond to cooperative cancellation promptly. If it
+waits for an unstructured child task or an API that ignores cancellation, a newer
+`runNow()` request cannot take over until that work returns.
+
+Calls to `updatePolicy(_:)` from independent tasks are applied in actor-arrival
+order, which is not guaranteed to match task creation order. Give policy updates
+one owner or otherwise serialize them; do not launch competing fire-and-forget
+policy updates from unrelated tasks.
+
 ### Event Observation
 
 `events()` observes events emitted after the subscription is created and does not
