@@ -38,11 +38,11 @@
 
 只要你的 Swift 包或 Xcode 工程已经建立好，就可以把 `swift-sequential-executor` 添加到 `Package.swift` 的 `dependencies`，或者加到 Xcode 的包依赖列表里。
 
-添加 `1.1.0` 或更高版本：
+添加 `1.1.1` 或更高版本：
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/shensven/swift-sequential-executor.git", from: "1.1.0")
+    .package(url: "https://github.com/shensven/swift-sequential-executor.git", from: "1.1.1")
 ]
 ```
 
