@@ -125,3 +125,26 @@ event of a run. Runs never overlap, so events of different runs never interleave
 
 Request, run, and execution identifiers come from one increasing counter per
 executor, so no two of them share a number and a larger identifier was issued later.
+
+## Topics
+
+### Running
+
+- ``SequentialExecutor/init(execute:eventHandler:)-9rdi0``
+- ``SequentialExecutor/init(execute:eventHandler:)-82nqe``
+- ``SequentialExecutor/run()``
+- ``SequentialExecutor/updatePolicy(_:)``
+- ``SequentialExecutor/runNow()``
+
+### Observing
+
+- ``SequentialExecutor/events(bufferingPolicy:)``
+- ``SequentialExecutor/EventHandler``
+- ``SequentialExecutor/Event``
+
+### Values
+
+- ``SequentialExecutor/Policy``
+- ``SequentialExecutor/RunNowResult``
+- ``SequentialExecutor/ExecutionContext``
+- ``SequentialExecutor/ExecutionSource``

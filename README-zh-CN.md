@@ -13,8 +13,8 @@
 
 ## SequentialExecutor 提供了什么
 
-- [x] 按固定延迟依次运行异步任务
-- [x] 支持优先于定时调度的立即执行
+- [x] 异步任务逐个执行，定时执行之间保持固定延迟
+- [x] 支持优先于定时调度的立即执行，被取代的执行通过协作式取消退出
 - [x] 等待与执行都由一个结构化的 `run()` 调用驱动，取消持有它的任务即可停止一切
 - [x] 通过同步回调或 `AsyncStream` 提供生命周期事件，方便接入日志、监控或 UI
 - [x] 完整的 [API 文档](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
@@ -116,7 +116,46 @@ let run = Task { await executor.run() }
 await executor.runNow()
 ```
 
-### 立即执行结果
+## 工作原理
+
+### 所有权与生命周期
+
+只有 `run()` 会等待或执行。等待与执行都在 `run()` 持有并始终等待的任务里进行，所以没有任何
+东西能活过它：取消调用 `run()` 的任务，进行中的等待或执行会被协作式取消，发出 `runEnded`，
+`run()` 返回。没有分离的工作，也没有需要清理的东西。
+
+在 SwiftUI 里，从 `.task` 修饰器调用 `run()`，run 的生命周期就与 View 完全一致；执行器本身
+放在真正拥有调度策略的模型里：
+
+```swift
+.task { await model.executor.run() }
+```
+
+同一时刻只有一个 run 处于活动状态。在另一个 run 活动期间调用 `run()` 会等它结束后再开始，
+这让一个 View 的 `.task` 可以无重叠地交接给下一个。`runNow()` 需要活动中的 run；没有时它
+立即返回 `.notRunning`，而不是开始一份没有人持有的工作。
+
+### 策略与调度
+
+策略只控制等待。`.paused` 让 run 空闲，直到策略改变或调用 `runNow()`；`.interval` 在两次
+执行之间等待固定延迟。改变策略不会取消已经开始的执行。
+
+定时执行采用固定延迟（fixed-delay），而不是固定频率（fixed-rate）：
+
+```text
+等待 interval → 执行 → 等待 interval → 执行
+```
+
+- 设置 interval 后，会先完整等待一个 interval，再开始第一次执行。
+- 上一次执行退出后才开始下一次等待，执行耗时不会从延迟中扣除。
+- 暂停会取消正在进行的等待，但不会取消已经开始的执行。
+- 修改 interval 会重新开始当前等待；如果任务正在执行，新延迟会在任务退出后生效。
+
+从多个独立 Task 调用 `updatePolicy(_:)` 时，策略按照 actor 实际收到调用的顺序应用，
+这个顺序不保证与 Task 创建顺序一致。应让一个对象统一拥有策略更新，或者在调用方显式
+串行化；不要从互不相关的 Task 竞争式地 fire-and-forget 更新策略。
+
+### 立即执行
 
 `runNow()` 会返回 `RunNowResult`。`execute` 抛出的错误会以 `.failed` 返回，并同时以
 `executionFailed` 事件发出：
@@ -152,37 +191,13 @@ Swift 的协作式取消允许闭包用两种方式响应：抛出 `Cancellation
 取消调用方自己的 `Task` 不会撤回已提交给执行器的请求。执行属于 run；只有更新的 `runNow()`
 请求或 run 的结束能停止它，取消始终是协作式的。
 
-调用方不需要结果时，可以直接忽略返回值。
-
-### 所有权与生命周期
-
-只有 `run()` 会等待或执行。等待与执行都在 `run()` 持有并始终等待的任务里进行，所以没有任何
-东西能活过它：取消调用 `run()` 的任务，进行中的等待或执行会被协作式取消，发出 `runEnded`，
-`run()` 返回。没有分离的工作，也没有需要清理的东西。
-
-在 SwiftUI 里，从 `.task` 修饰器调用 `run()`，run 的生命周期就与 View 完全一致；执行器本身
-放在真正拥有调度策略的模型里：
-
-```swift
-.task { await model.executor.run() }
-```
-
-同一时刻只有一个 run 处于活动状态。在另一个 run 活动期间调用 `run()` 会等它结束后再开始，
-这让一个 View 的 `.task` 可以无重叠地交接给下一个。`runNow()` 需要活动中的 run；没有时它
-立即返回 `.notRunning`，而不是开始一份没有人持有的工作。
-
-策略只控制等待。`.paused` 让 run 空闲，直到策略改变或调用 `runNow()`；`.interval` 在两次
-执行之间等待固定延迟。改变策略不会取消已经开始的执行。
-
 `execute` 闭包必须及时响应协作式取消，抛出 `CancellationError` 或提前返回都可以。如果它
 正在等待一个非结构化子任务，或者等待不会响应取消的 API，新的 `runNow()` 请求就只能等到旧
 工作返回后才能接管。
 
-从多个独立 Task 调用 `updatePolicy(_:)` 时，策略按照 actor 实际收到调用的顺序应用，
-这个顺序不保证与 Task 创建顺序一致。应让一个对象统一拥有策略更新，或者在调用方显式
-串行化；不要从互不相关的 Task 竞争式地 fire-and-forget 更新策略。
+调用方不需要结果时，可以直接忽略返回值。
 
-### 事件观察
+### 事件
 
 `events()` 只观察订阅创建之后发出的事件，不会重放历史事件。其默认缓冲区没有
 容量上限；需要限制缓冲时，可以使用 `events(bufferingPolicy:)`，但有界缓冲可能丢弃
@@ -199,30 +214,7 @@ Swift 的协作式取消允许闭包用两种方式响应：抛出 `Cancellation
 - 请求、run、执行的标识来自同一个执行器内递增的计数器，三者不会共用一个数字，
   数字更大的标识一定更晚发出。
 
-## 行为概览
-
-`SequentialExecutor` 提供以下保证：
-
-- 同一时间只会运行一个异步任务
-- 定时任务按固定延迟运行，也可以随时立即触发
-- 新任务接管时，当前任务通过协作式取消（cooperative cancellation）退出
-- 取消调用 `run()` 的任务，会结束等待和在途执行
-
-### 调度语义
-
-定时执行采用固定延迟（fixed-delay），而不是固定频率（fixed-rate）：
-
-```text
-等待 interval → 执行 → 等待 interval → 执行
-```
-
-- 设置 interval 后，会先完整等待一个 interval，再开始第一次执行。
-- 上一次执行退出后才开始下一次等待，执行耗时不会从延迟中扣除。
-- 暂停会取消正在进行的等待，但不会取消已经开始的执行。
-- 修改 interval 会重新开始当前等待；如果任务正在执行，新延迟会在任务退出后生效。
-
-<details>
-<summary>协调模型</summary>
+### 协调模型
 
 在一个活动的 run 内，执行器的行为可以读作 4 个状态。实现里并没有存一个状态值，而是跟踪
 策略、待处理的立即请求和在途执行，下面的规则由此推出。这张图展示了状态之间的流转：
@@ -258,11 +250,6 @@ flowchart TD
 - 在 `Handoff` 中如果又收到新的立即请求，状态不变，但较早的待处理请求会让位给最新请求
 - 在任何状态下取消 run，都会结束进行中的等待或执行，然后 run 返回
 
-</details>
-
-<details>
-<summary>轮替流程</summary>
-
 立即请求通过协作式接管执行，不会与当前任务并行：
 
 - 如果 run 正在等待 interval，这段等待会先结束
@@ -271,38 +258,6 @@ flowchart TD
 - 如果轮替期间有多个立即请求到来，最新的请求接管，更早的待处理请求会让位
 - 如果当前任务不配合取消，新的立即任务只能继续等待
 - 立即任务退出后，如果策略有 interval，run 会回到等待状态
-
-下面的时序图展示了“任务正在运行时收到立即触发”的典型路径：
-
-```mermaid
-sequenceDiagram
-    participant Caller as 调用方
-    participant Run as run()
-    participant CurrentTask as 当前任务
-    participant NextTask as 新的立即任务
-
-    Note over Run,CurrentTask: 策略有 interval，且当前任务仍在运行
-
-    Caller->>Run: 立即触发（runNow）
-    Run->>CurrentTask: 取消（cancel）
-    CurrentTask-->>Run: 退出
-    Run->>NextTask: 开始立即任务（start immediate task）
-    Note over NextTask: 运行异步任务（async task）
-
-    alt 任务正常结束（finished）
-        NextTask-->>Run: 任务结束（finished）
-    else 任务抛出错误（failed）
-        NextTask-->>Run: 任务失败（failed）
-    else 任务被取消（cancelled）
-        NextTask-->>Run: 任务取消（cancelled）
-    end
-
-    opt 策略有 interval
-        Run-->>Run: 回到等待（waiting）
-    end
-```
-
-</details>
 
 ## 示例应用
 

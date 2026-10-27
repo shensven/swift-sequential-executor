@@ -13,8 +13,8 @@ Run async tasks one at a time, on schedule or on demand.
 
 ## What SequentialExecutor Provides
 
-- [x] Runs async tasks with a fixed delay between executions
-- [x] Supports immediate execution that takes precedence over the schedule
+- [x] Runs async tasks one at a time, with a fixed delay between scheduled executions
+- [x] Supports immediate execution that takes precedence over the schedule; the execution it replaces exits through cooperative cancellation
 - [x] Drives waiting and executing from one structured `run()` call, so cancelling the task that owns it cancels everything
 - [x] Reports lifecycle events through a synchronous handler or an `AsyncStream` for logging, monitoring, or UI integration
 - [x] Full [API Documentation](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
@@ -118,7 +118,51 @@ let run = Task { await executor.run() }
 await executor.runNow()
 ```
 
-### Immediate Execution Results
+## How It Works
+
+### Ownership and Lifetime
+
+`run()` is the only thing that waits or executes. Waiting and executing happen in
+tasks that `run()` owns and always awaits, so nothing outlives it: cancel the task
+that called `run()` and an active wait or execution is cancelled cooperatively,
+`runEnded` is emitted, and `run()` returns. There is no detached work and nothing to
+clean up.
+
+In SwiftUI, call `run()` from a `.task` modifier so the run lives exactly as long as
+the view, and keep the executor in the model that owns the scheduling policy:
+
+```swift
+.task { await model.executor.run() }
+```
+
+Only one run is active at a time. A `run()` call made while another run is active
+waits for that run to end before starting, which lets one view's `.task` hand over to
+the next without overlap. `runNow()` requires an active run; without one it returns
+`.notRunning` immediately instead of starting work that nobody owns.
+
+### Policy and Scheduling
+
+The policy only controls waiting. `.paused` keeps the run idle until the policy
+changes or `runNow()` is called; `.interval` waits for the fixed delay between
+executions. Changing the policy never cancels an execution that has already started.
+
+Scheduled execution uses fixed-delay rather than fixed-rate semantics:
+
+```text
+wait interval → execute → wait interval → execute
+```
+
+- Setting an interval waits for one full interval before the first execution.
+- The next interval begins only after the previous execution exits, so execution time is not subtracted from the delay.
+- Pausing cancels an active wait, but lets an execution that has already started exit normally.
+- Changing the interval restarts an active wait. If an execution is already running, the new delay is applied after it exits.
+
+Calls to `updatePolicy(_:)` from independent tasks are applied in actor-arrival
+order, which is not guaranteed to match task creation order. Give policy updates
+one owner or otherwise serialize them; do not launch competing fire-and-forget
+policy updates from unrelated tasks.
+
+### Immediate Execution
 
 `runNow()` returns a `RunNowResult`. Errors thrown by `execute` are returned as
 `.failed` and are also delivered as `executionFailed` events:
@@ -158,43 +202,14 @@ Cancelling the caller's `Task` does not withdraw a request that was submitted to
 executor. The execution belongs to the run; only a newer `runNow()` request or the end
 of the run stops it, and cancellation remains cooperative.
 
-The return value is discardable when the caller doesn't need the outcome.
-
-### Ownership and Lifetime
-
-`run()` is the only thing that waits or executes. Waiting and executing happen in
-tasks that `run()` owns and always awaits, so nothing outlives it: cancel the task
-that called `run()` and an active wait or execution is cancelled cooperatively,
-`runEnded` is emitted, and `run()` returns. There is no detached work and nothing to
-clean up.
-
-In SwiftUI, call `run()` from a `.task` modifier so the run lives exactly as long as
-the view, and keep the executor in the model that owns the scheduling policy:
-
-```swift
-.task { await model.executor.run() }
-```
-
-Only one run is active at a time. A `run()` call made while another run is active
-waits for that run to end before starting, which lets one view's `.task` hand over to
-the next without overlap. `runNow()` requires an active run; without one it returns
-`.notRunning` immediately instead of starting work that nobody owns.
-
-The policy only controls waiting. `.paused` keeps the run idle until the policy
-changes or `runNow()` is called; `.interval` waits for the fixed delay between
-executions. Changing the policy never cancels an execution that has already started.
-
 The `execute` closure must respond to cooperative cancellation promptly, either by
 throwing `CancellationError` or by returning early. If it waits for an unstructured
 child task or an API that ignores cancellation, a newer `runNow()` request cannot take
 over until that work returns.
 
-Calls to `updatePolicy(_:)` from independent tasks are applied in actor-arrival
-order, which is not guaranteed to match task creation order. Give policy updates
-one owner or otherwise serialize them; do not launch competing fire-and-forget
-policy updates from unrelated tasks.
+The return value is discardable when the caller doesn't need the outcome.
 
-### Event Observation
+### Events
 
 `events()` observes events emitted after the subscription is created and does not
 replay earlier events. Its default buffer is unbounded. Use
@@ -213,30 +228,7 @@ Ordering guarantees:
 - Request, run, and execution identifiers come from one increasing counter per
   executor, so no two of them share a number and a larger identifier was issued later.
 
-## Behavior
-
-`SequentialExecutor` provides these guarantees:
-
-- Only one async task runs at a time
-- Scheduled tasks use a fixed delay and can also be triggered immediately when needed
-- When a new task takes over, the current task exits through cooperative cancellation
-- Cancelling the task that called `run()` ends waiting and any in-flight execution
-
-### Scheduling Semantics
-
-Scheduled execution uses fixed-delay rather than fixed-rate semantics:
-
-```text
-wait interval → execute → wait interval → execute
-```
-
-- Setting an interval waits for one full interval before the first execution.
-- The next interval begins only after the previous execution exits, so execution time is not subtracted from the delay.
-- Pausing cancels an active wait, but lets an execution that has already started exit normally.
-- Changing the interval restarts an active wait. If an execution is already running, the new delay is applied after it exits.
-
-<details>
-<summary>Coordination Model</summary>
+### Coordination Model
 
 Within an active run, the executor's behavior reads as four states. The implementation
 does not store a state value; it tracks the policy, the pending immediate request, and
@@ -274,11 +266,6 @@ flowchart TD
 - If a newer immediate request arrives while in `Handoff`, the state does not change, but the older pending request yields to the newest one
 - Cancelling the run from any state ends the active wait or execution and the run returns
 
-</details>
-
-<details>
-<summary>Handoff Flow</summary>
-
 An immediate request performs a cooperative handoff instead of starting concurrent work:
 
 - If the run is waiting for the interval, that wait ends first
@@ -287,38 +274,6 @@ An immediate request performs a cooperative handoff instead of starting concurre
 - If multiple immediate requests arrive during handoff, the latest one takes over and older pending requests yield
 - If the current task does not cooperate with cancellation, the new immediate task has to keep waiting
 - After the immediate task exits, the run goes back to waiting if the policy has an interval
-
-The sequence diagram below shows a typical path where a task is already running and an immediate trigger arrives:
-
-```mermaid
-sequenceDiagram
-    participant Caller
-    participant Run as run()
-    participant CurrentTask as current task
-    participant NextTask as next immediate task
-
-    Note over Run,CurrentTask: The policy has an interval and the current task is still running
-
-    Caller->>Run: Trigger immediately
-    Run->>CurrentTask: Cancel
-    CurrentTask-->>Run: Exit
-    Run->>NextTask: Start immediate task
-    Note over NextTask: Run async task
-
-    alt Task finishes normally
-        NextTask-->>Run: Task finished
-    else Task throws
-        NextTask-->>Run: Task failed
-    else Task is cancelled
-        NextTask-->>Run: Task cancelled
-    end
-
-    opt Policy has an interval
-        Run-->>Run: Return to waiting
-    end
-```
-
-</details>
 
 ## Example App
 
