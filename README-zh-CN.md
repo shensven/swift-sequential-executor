@@ -253,7 +253,7 @@ flowchart TD
     Handoff -->|被取消的任务退出| Executing
 ```
 
-- 在 `Paused` 或 `Waiting` 中收到立即请求时没有需要等待的任务，会在同一步直接开始执行
+- 在 `Paused` 或 `Waiting` 中收到立即请求时没有需要等待的任务：run 被唤醒，结束进行中的等待，直接开始执行，不经过 `Handoff`。恰好同时到期的 interval 会被该请求占用，不会再开始一次定时执行
 - 在 `Waiting` 中更新 interval 后，仍然是 `Waiting`，但旧等待会被取消并重新开始
 - 在 `Handoff` 中如果又收到新的立即请求，状态不变，但较早的待处理请求会让位给最新请求
 - 在任何状态下取消 run，都会结束进行中的等待或执行，然后 run 返回

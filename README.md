@@ -269,7 +269,7 @@ flowchart TD
     Handoff -->|Cancelled task exits| Executing
 ```
 
-- An immediate request from `Paused` or `Waiting` has nothing to wait for, so it starts in the same step
+- An immediate request from `Paused` or `Waiting` has nothing to wait for: the run wakes, ends the wait if one was active, and starts the execution without passing through `Handoff`. An interval that elapses at the same moment is taken by the request instead of starting a scheduled execution
 - If the interval is updated while in `Waiting`, the run stays in `Waiting`, but cancels the old wait and starts a new one
 - If a newer immediate request arrives while in `Handoff`, the state does not change, but the older pending request yields to the newest one
 - Cancelling the run from any state ends the active wait or execution and the run returns

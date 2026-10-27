@@ -165,10 +165,12 @@ public extension SequentialExecutor {
 
     /// Requests a new immediate execution.
     ///
-    /// Immediate execution has priority over the schedule. An active wait ends, and an
+    /// Immediate execution has priority over the schedule. An active wait ends, an
+    /// interval that elapses at the same moment is taken by the request, and an
     /// in-flight execution is cancelled before this method emits `requested`; the
-    /// request starts once that execution has exited. If several requests arrive before one starts, the newest one runs
-    /// and the others complete as ``RunNowResult/superseded(requestID:byRequestID:)``.
+    /// request starts once that execution has exited. If several requests arrive before
+    /// one starts, the newest one runs and the others complete as
+    /// ``RunNowResult/superseded(requestID:byRequestID:)``.
     /// Cancellation remains cooperative: the executor does not forcibly terminate
     /// non-cooperative work.
     ///
@@ -250,8 +252,9 @@ private extension SequentialExecutor {
 
     /// Waits until the interval elapses or an immediate request is pending.
     ///
-    /// A pending request is checked before any wait, so it preempts the schedule. A
-    /// change to the policy or a new request ends the current wait, and the loop
+    /// A pending request is checked before any wait and again when the interval
+    /// elapses, so it preempts the schedule even when both happen at the same moment.
+    /// A change to the policy or a new request ends the current wait, and the loop
     /// re-evaluates both. The wait and the change listener race as child tasks.
     func awaitTrigger() async -> Trigger {
         while true {
@@ -295,6 +298,9 @@ private extension SequentialExecutor {
             switch outcome {
             case .elapsed:
                 emit(.intervalElapsed)
+                // A request registered while the timer was firing takes the elapsed tick:
+                // the immediate execution replaces the scheduled one.
+                if let request = takePendingRequest() { return .immediate(request) }
                 return .elapsed
             case .changed:
                 if interval != nil {

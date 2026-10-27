@@ -330,6 +330,45 @@ import Testing
         }
     }
 
+    // MARK: Schedule Preemption
+
+    @Test func requestArrivingAsIntervalElapses_runsBeforeAnyScheduledExecution() async throws {
+        // Aim each request at the moment the interval elapses so the timer and the
+        // request race inside the run. Whatever the race, a request must never be
+        // followed by a scheduled execution before its own execution starts.
+        let events = EventRecorder()
+        let executor = SequentialExecutor(
+            execute: {},
+            eventHandler: { event in
+                events.record(event)
+            }
+        )
+        let run = try await startRun(executor, events: events)
+        await executor.updatePolicy(.interval(.milliseconds(1)))
+
+        let clock = ContinuousClock()
+        for round in 0 ..< 400 {
+            if let lastWait = events.snapshot().last(where: \.isWaitStarted) {
+                let jitter = Double(round % 7) * 0.00002
+                let delay = lastWait.emittedAt.addingTimeInterval(0.001).timeIntervalSinceNow - jitter
+                if delay > 0 { try await clock.sleep(for: .seconds(delay)) }
+            }
+            await executor.runNow()
+        }
+        await stopRun(run)
+
+        let snapshot = events.snapshot()
+        var violations = 0
+        for (index, event) in snapshot.enumerated() where event.isRequested {
+            guard let startIndex = snapshot[(index + 1)...].firstIndex(where: \.isExecutionStarted) else { continue }
+            if snapshot[startIndex].isScheduledExecutionStarted {
+                violations += 1
+            }
+        }
+        #expect(snapshot.filter(\.isRequested).count == 400)
+        #expect(violations == 0)
+    }
+
     // MARK: Cancellation Precedence
 
     @Test func cancellationRequested_takesPrecedenceOverThrownError() async throws {
