@@ -23,6 +23,8 @@ jobs:
           - swift: "6.4"
             os: ubuntu-24.04
           - swift: "6.4"
+            os: ubuntu-24.04-arm
+          - swift: "6.4"
             os: ubuntu-22.04
 
           # Swift 6.3
