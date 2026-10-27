@@ -375,8 +375,9 @@ private extension SequentialExecutor {
         // The detached task first hops back onto the actor, so it cannot observe
         // `activeLoop` before this synchronous assignment completes.
         let task = Task<Void, Never>.detached { [weak self, clock] in
-            // Waiting happens outside actor isolation so a sleeping loop does not keep
-            // the executor alive. Each execution still runs in its own replaceable task.
+            // The loop captures the executor weakly, so a sleeping loop does not keep it
+            // alive. The detached task waits outside actor isolation and hops back only
+            // to emit events and to start executions, each in its own replaceable task.
             while let interval = await self?.beginScheduledWait(loopID: loopID) {
                 let waitOutcome: ScheduledWaitOutcome
                 do {
