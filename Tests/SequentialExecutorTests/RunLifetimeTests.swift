@@ -150,6 +150,10 @@ import Testing
         run.cancel()
         await run.value
 
-        #expect(events.snapshot().isEmpty || events.snapshot().contains(where: \.isRunEnded))
+        // 取消可能赶在 run() 登记之前（没有任何事件），也可能赶在之后（runStarted 随即 runEnded）；
+        // 两种时序下都不能留下一个没有结束的 run。
+        let snapshot = events.snapshot()
+        #expect(snapshot.filter(\.isRunStarted).count == snapshot.filter(\.isRunEnded).count)
+        #expect(snapshot.allSatisfy { $0.isRunStarted || $0.isRunEnded })
     }
 }

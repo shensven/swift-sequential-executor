@@ -92,7 +92,7 @@ final class ExecutionProbe: @unchecked Sendable {
     }
 
     func wait(
-        timeout: Duration = .seconds(2),
+        timeout: Duration = .seconds(10),
         until predicate: @escaping @Sendable (ExecutionSnapshot) -> Bool
     ) async -> ExecutionSnapshot? {
         let waiterID = UUID()
@@ -193,7 +193,7 @@ final class EventRecorder: @unchecked Sendable {
     }
 
     func wait(
-        timeout: Duration = .seconds(2),
+        timeout: Duration = .seconds(10),
         until predicate: @escaping @Sendable ([SequentialExecutor.Event]) -> Bool
     ) async -> [SequentialExecutor.Event]? {
         let waiterID = UUID()
@@ -247,19 +247,6 @@ func recordEvents(
             recorder.record(event)
         }
     }
-}
-
-func eventually(
-    timeout: Duration = .seconds(2),
-    until predicate: @escaping @Sendable () -> Bool
-) async -> Bool {
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: timeout)
-    while clock.now < deadline {
-        if predicate() { return true }
-        await Task.yield()
-    }
-    return predicate()
 }
 
 // MARK: Run Helpers

@@ -83,6 +83,31 @@ import Testing
         await stopRun(run)
     }
 
+    @Test func executionStarted_isEmittedBeforeExecuteRuns() async throws {
+        // 契约：executionStarted 在选中执行时同步发出，早于 execute 的任何代码。
+        let events = EventRecorder()
+        let startedBeforeExecute = InvocationCounter()
+        let executor = SequentialExecutor(
+            execute: { context in
+                let alreadyStarted = events.snapshot().contains { event in
+                    if case let .executionStarted(executionID, _) = event.kind { return executionID == context.executionID }
+                    return false
+                }
+                if alreadyStarted { _ = startedBeforeExecute.next() }
+            },
+            eventHandler: { event in
+                events.record(event)
+            }
+        )
+        let run = try await startRun(executor, events: events)
+
+        await executor.runNow()
+        await executor.runNow()
+
+        #expect(startedBeforeExecute.value() == 2)
+        await stopRun(run)
+    }
+
     @Test func runNow_emitsExecutionFailedWhenWorkThrows() async throws {
         let events = EventRecorder()
         let executor = SequentialExecutor(
