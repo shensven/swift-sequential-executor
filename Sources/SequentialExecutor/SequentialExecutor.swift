@@ -3,194 +3,42 @@
 
 import Foundation
 
-// MARK: Public Types
-
 /// Runs one execution at a time.
 ///
-/// Scheduled work uses fixed-delay semantics: the loop waits for the configured
-/// interval, executes once, and starts the next wait only after that execution exits.
-/// Enabling scheduling does not execute immediately, and executions never overlap.
+/// `run()` drives the executor: it waits for the configured interval or for an
+/// immediate request, performs one execution, and waits again. Waiting and
+/// executing happen in tasks that `run()` owns and always awaits, so cancelling the
+/// task that called `run()` cancels them cooperatively and `run()` returns. Nothing
+/// outlives it.
 ///
-/// `runNow()` takes precedence over the scheduled loop. It stops the current
-/// loop, requests cancellation of any in-flight execution, and coordinates a new
-/// immediate execution. When requests race, the newest pending request takes over.
-/// The scheduled loop resumes afterward when its policy remains enabled.
+/// Scheduled work uses fixed-delay semantics: the run waits for the configured
+/// interval, executes once, and starts the next wait only after that execution exits.
+/// Setting an interval does not execute immediately, and executions never overlap.
+///
+/// `runNow()` takes precedence over the schedule. It ends the current wait or
+/// requests cancellation of the in-flight execution, then runs the newest pending
+/// request. The schedule resumes afterward when the policy still has an interval.
 ///
 /// The public surface is intentionally small:
 /// - `execute` defines the unit of work.
-/// - `eventHandler` observes lifecycle events in emission order.
-/// - `updatePolicy(_:)` controls the scheduled loop.
-/// - `runNow()` requests an immediate execution that takes precedence over scheduling.
+/// - `run()` drives waiting and executing for as long as its task lives.
+/// - `updatePolicy(_:)` pauses the schedule or sets its interval.
+/// - `runNow()` requests an immediate execution that takes precedence over the schedule.
+/// - `eventHandler` and `events(bufferingPolicy:)` observe lifecycle events.
 public actor SequentialExecutor {
-    /// Reports the executor's observable lifecycle.
-    ///
-    /// Request, loop, and execution identifiers are issued from one monotonically
-    /// increasing counter per executor, so within one executor no two of them share
-    /// a number and a larger identifier was always issued later.
-    ///
-    /// The events are grouped into:
-    /// - immediate requests
-    /// - execution lifecycle
-    /// - policy changes
-    /// - loop lifecycle
-    /// - loop waiting
-    public struct Event: Sendable {
-        /// Identifies a lifecycle transition.
-        public enum Kind: Sendable {
-            /// Reports that a caller requested an immediate execution.
-            ///
-            /// No scheduled execution starts until this request has settled. The next
-            /// `executionStarted` event belongs either to this request or to a newer
-            /// request that superseded it.
-            case requested(requestID: UInt)
-            /// Reports that a single execution started.
-            ///
-            /// The executor emits this synchronously when it selects the execution,
-            /// before awaiting `execute(context)` for the matching `executionID`. It is
-            /// always ordered before that execution's finished, cancelled, or failed event.
-            case executionStarted(executionID: UInt, source: ExecutionSource)
-            /// Reports that a single execution finished successfully.
-            case executionFinished(executionID: UInt, source: ExecutionSource)
-            /// Reports that a single execution was cancelled.
-            case executionCancelled(executionID: UInt, source: ExecutionSource)
-            /// Reports that a single execution failed with an error.
-            case executionFailed(executionID: UInt, source: ExecutionSource, error: any Error & Sendable)
-
-            /// Reports that the loop policy changed.
-            case policyUpdated(previous: Policy, new: Policy)
-
-            /// Reports that a new scheduled loop started.
-            ///
-            /// For a given `loopID`, this event is emitted before any waiting,
-            /// stopping, or exit event.
-            case loopStarted(loopID: UInt)
-            /// Reports that the current scheduled loop was asked to stop.
-            case loopStopped(loopID: UInt, reason: LoopStopReason)
-            /// Reports that the scheduled loop fully exited.
-            ///
-            /// Events from different loop identifiers may interleave. In particular,
-            /// an old loop can exit after its replacement has already started.
-            case loopExited(loopID: UInt)
-
-            /// Reports that the loop started waiting for the next interval.
-            case waitStarted(loopID: UInt, interval: Duration)
-            /// Reports that the current loop wait was cancelled.
-            case waitCancelled(loopID: UInt)
-            /// Reports that the configured interval elapsed.
-            case intervalElapsed(loopID: UInt)
-        }
-
-        /// The time when the executor emitted this event on its coordination path.
-        public let emittedAt: Date
-        /// The lifecycle payload emitted at `emittedAt`.
-        public let kind: Kind
-
-        /// Creates a lifecycle event stamped with the current time.
-        ///
-        /// Only the executor creates events, so this initializer stays internal.
-        init(kind: Kind) {
-            emittedAt = .now
-            self.kind = kind
-        }
-    }
-
-    /// Observes lifecycle events synchronously on the executor's coordination path.
-    ///
-    /// Handlers must be safe to transfer across isolation domains. Keep handlers
-    /// lightweight and use ``events(bufferingPolicy:)`` for actor-isolated or asynchronous work.
-    public typealias EventHandler = @Sendable (Event) -> Void
-
-    /// Describes what triggered an execution.
-    public enum ExecutionSource: Sendable, Equatable {
-        /// Identifies an explicit `runNow()` request.
-        case runNow(requestID: UInt)
-        /// Identifies a scheduled loop tick.
-        case scheduledLoop(loopID: UInt)
-    }
-
-    /// Describes the execution currently being run.
-    public struct ExecutionContext: Sendable, Equatable {
-        /// Identifies this specific execution.
-        ///
-        /// The same identifier appears in the matching execution lifecycle events.
-        public let executionID: UInt
-        /// Describes what triggered this execution.
-        ///
-        /// The same source appears in the matching execution lifecycle events.
-        public let source: ExecutionSource
-
-        /// Creates an execution context.
-        ///
-        /// Only the executor creates contexts, so this initializer stays internal.
-        init(executionID: UInt, source: ExecutionSource) {
-            self.executionID = executionID
-            self.source = source
-        }
-    }
-
-    /// Reports how an immediate execution request completed.
-    ///
-    /// A request that has already started ends as `finished`, `cancelled`, or
-    /// `failed`. Only a request replaced before it starts ends as `superseded`.
-    public enum RunNowResult: Sendable {
-        /// The requested execution finished successfully.
-        case finished(ExecutionContext)
-        /// The requested execution started, then ended through cancellation.
-        ///
-        /// This includes cooperative task cancellation and a `CancellationError`
-        /// thrown by the execution closure.
-        case cancelled(ExecutionContext)
-        /// The requested execution started, then failed with a non-cancellation error.
-        case failed(ExecutionContext, any Error & Sendable)
-        /// A newer immediate request replaced this request before it started.
-        case superseded(requestID: UInt, byRequestID: UInt)
-    }
-
-    /// Explains why a scheduled loop stopped.
-    public enum LoopStopReason: Sendable, Equatable {
-        /// Indicates that an immediate execution request stopped the loop.
-        case runNowRequested
-        /// Indicates that the loop policy disabled the loop.
-        case policyDisabled
-        /// Indicates that the loop policy changed and the loop must restart.
-        case policyUpdated
-    }
-
-    /// Controls whether the scheduled loop should run and how long it waits.
-    public enum Policy: Sendable, Equatable {
-        /// Disables future scheduled executions.
-        case disabled
-        /// Waits for the duration before each scheduled execution.
-        ///
-        /// The duration must be greater than zero; ``SequentialExecutor/updatePolicy(_:)``
-        /// traps otherwise. The first execution waits for one full duration, and each
-        /// later wait starts after the prior execution exits. This is fixed-delay
-        /// scheduling rather than fixed-rate scheduling.
-        case interval(Duration)
-
-        fileprivate var interval: Duration? {
-            if case let .interval(interval) = self {
-                return interval
-            }
-            return nil
-        }
-    }
-
     // MARK: Stored Properties
 
     private let execute: @Sendable (ExecutionContext) async throws -> Void
     private let eventHandler: EventHandler?
     private let clock = ContinuousClock()
     private var eventContinuations: [UUID: AsyncStream<Event>.Continuation] = [:]
+    private var changeWaiters: [UUID: AsyncStream<Void>.Continuation] = [:]
 
-    private var activeLoop: ActiveLoop?
-    private var loopPolicy = Policy.disabled
-
-    private var activeExecution: ActiveExecution?
-
+    private var policy = Policy.paused
+    private var activeRunID: UInt?
+    private var activeExecution: Task<ExecutionOutcome, Never>?
+    private var pendingRequest: PendingRequest?
     private var lastIssuedID: UInt = 0
-    private var latestImmediateExecutionRequestID: UInt = 0
-    private var pendingImmediateExecutionCount = 0
 
     // MARK: Lifecycle
 
@@ -201,16 +49,18 @@ public actor SequentialExecutor {
     ///     The executor passes the current execution context, including the
     ///     execution identifier and the trigger source. The executor emits the
     ///     matching `executionStarted` event synchronously before awaiting this closure.
-    ///     This closure is expected to cooperate with Swift Concurrency cancellation.
-    ///     When `runNow()` needs to replace an in-flight execution, it cancels the
-    ///     current task and then waits for this closure to return. If the closure does
-    ///     not observe cancellation, the replacement execution cannot start promptly.
+    ///     This closure is expected to cooperate with Swift Concurrency cancellation,
+    ///     either by throwing `CancellationError` or by returning early; the executor
+    ///     reports both as a cancelled execution. When `runNow()` needs to replace an
+    ///     in-flight execution, it cancels the execution's task and waits for this
+    ///     closure to return. If the closure does not observe cancellation, the
+    ///     replacement execution cannot start promptly.
     ///   - eventHandler: An optional observer for lifecycle events.
     ///     The executor invokes this `@Sendable` callback synchronously on its
     ///     coordination path in the same order the events are emitted. The handler
     ///     cannot synchronously access state isolated elsewhere, such as MainActor UI
-    ///     state. Keep it lightweight and use ``events(bufferingPolicy:)`` for isolated or asynchronous
-    ///     event processing.
+    ///     state. Keep it lightweight and use ``events(bufferingPolicy:)`` for isolated
+    ///     or asynchronous event processing.
     public init(
         execute: @escaping @Sendable (ExecutionContext) async throws -> Void,
         eventHandler: EventHandler? = nil
@@ -231,72 +81,123 @@ public actor SequentialExecutor {
             eventHandler: eventHandler
         )
     }
-
-    deinit {
-        activeLoop?.task.cancel()
-        activeExecution?.task.cancel()
-        eventContinuations.values.forEach { $0.finish() }
-    }
 }
 
-// MARK: Active Work
+// MARK: Internal Types
 
 private extension SequentialExecutor {
-    /// The scheduled loop that currently owns waiting and scheduled executions.
-    ///
-    /// Pairing the identifier with its task guarantees that a tracked loop always
-    /// has an identifier, and that clearing one clears the other.
-    struct ActiveLoop {
+    /// The newest `runNow()` request that has not started yet.
+    struct PendingRequest {
         let id: UInt
-        let task: Task<Void, Never>
+        let continuation: CheckedContinuation<RunNowResult, Never>
     }
 
-    /// The execution that is currently running, regardless of its trigger.
-    struct ActiveExecution {
-        let id: UInt
-        let task: Task<ExecutionCompletion, Never>
+    enum Trigger {
+        case elapsed
+        case immediate(PendingRequest)
+        case cancelled
+    }
+
+    enum WaitOutcome: Sendable {
+        case elapsed
+        case changed
+        case cancelled
+    }
+
+    enum ExecutionOutcome: Sendable {
+        case finished
+        case cancelled
+        case failed(any Error & Sendable)
     }
 }
 
 // MARK: Public API
 
 public extension SequentialExecutor {
-    /// Applies a new loop policy.
+    /// Drives the executor until the calling task is cancelled.
     ///
-    /// Updating the policy may start, stop, or restart the scheduled loop. Disabling
-    /// or changing the policy cancels an active interval wait, but does not cancel an
-    /// execution that has already started. That execution is allowed to exit before
-    /// the executor applies the next scheduled wait.
+    /// Waiting and executing happen in tasks this call owns and awaits, so cancelling
+    /// the caller cancels an active wait or execution cooperatively and this method
+    /// returns once that work has exited. Only one run is active at a time: a call
+    /// made while another run is active waits for that run to end before starting.
+    ///
+    /// An immediate request still pending when the run ends completes with
+    /// ``RunNowResult/notRunning(requestID:)``.
+    func run() async {
+        while activeRunID != nil {
+            await awaitChange()
+            if Task.isCancelled { return }
+        }
+        if Task.isCancelled { return }
+
+        let runID = nextID()
+        activeRunID = runID
+        emit(.runStarted(runID: runID))
+
+        await drive()
+
+        activeRunID = nil
+        if let pendingRequest = takePendingRequest() {
+            pendingRequest.continuation.resume(returning: .notRunning(requestID: pendingRequest.id))
+        }
+        emit(.runEnded(runID: runID))
+        notifyChange()
+    }
+
+    /// Applies a new policy.
+    ///
+    /// The policy only controls waiting. Pausing or changing the interval ends an
+    /// active wait and the run re-evaluates immediately; it never cancels an execution
+    /// that has already started, and a new interval applies after that execution exits.
+    /// Applying the current policy again does nothing.
     ///
     /// - Precondition: An `interval` policy must carry a duration greater than zero.
     func updatePolicy(_ policy: Policy) {
         if case let .interval(interval) = policy {
             precondition(interval > .zero, "SequentialExecutor.Policy.interval must be greater than zero.")
         }
-        reconcile(with: policy)
+        guard policy != self.policy else { return }
+        let previous = self.policy
+        self.policy = policy
+        emit(.policyUpdated(previous: previous, new: policy))
+        notifyChange()
     }
 
     /// Requests a new immediate execution.
     ///
-    /// Immediate execution has priority over the scheduled loop. If a loop is active,
-    /// it is stopped first. If another execution is already running, it is cancelled
-    /// and replaced by the new one. If multiple callers race to invoke `runNow()`,
-    /// only the latest pending request is guaranteed to proceed after cancellation
-    /// coordination completes. Cancellation remains cooperative: this method requests
-    /// cancellation of the in-flight execution and waits for it to return; it does not
-    /// forcibly terminate non-cooperative work.
+    /// Immediate execution has priority over the schedule. An active wait ends, and an
+    /// in-flight execution is cancelled before this method emits `requested`; the
+    /// request starts once that execution has exited. If several requests arrive before one starts, the newest one runs
+    /// and the others complete as ``RunNowResult/superseded(requestID:byRequestID:)``.
+    /// Cancellation remains cooperative: the executor does not forcibly terminate
+    /// non-cooperative work.
     ///
-    /// This method returns after the selected immediate execution exits, or as soon as
-    /// a newer request supersedes it before execution starts. Errors thrown by `execute`
-    /// are returned as ``RunNowResult/failed(_:_:)`` and are also reported through
-    /// ``Event/Kind/executionFailed(executionID:source:error:)``.
+    /// This method returns after the requested execution exits, or as soon as the
+    /// request is superseded. Without an active ``run()`` it returns
+    /// ``RunNowResult/notRunning(requestID:)`` immediately.
     ///
-    /// - Important: Cancelling the caller's task does not withdraw the request or
-    ///   cancel the executor's work. A newer `runNow()` request asks the current
-    ///   execution to cancel.
+    /// - Important: Cancelling the caller's task does not withdraw the request. The
+    ///   execution belongs to the run, and only a newer request or the end of the run
+    ///   stops it.
     @discardableResult
     func runNow() async -> RunNowResult {
-        await runImmediately()
+        let requestID = nextID()
+        guard activeRunID != nil else {
+            emit(.requested(requestID: requestID))
+            return .notRunning(requestID: requestID)
+        }
+
+        if let superseded = takePendingRequest() {
+            superseded.continuation.resume(returning: .superseded(requestID: superseded.id, byRequestID: requestID))
+        }
+        // Cancel the in-flight execution before observers learn about the request, so a
+        // handler reacting to `requested` already sees the handoff under way.
+        activeExecution?.cancel()
+        emit(.requested(requestID: requestID))
+        return await withCheckedContinuation { continuation in
+            pendingRequest = PendingRequest(id: requestID, continuation: continuation)
+            notifyChange()
+        }
     }
 
     /// Returns an async sequence view of the executor lifecycle events.
@@ -329,227 +230,195 @@ public extension SequentialExecutor {
     }
 }
 
-// MARK: Scheduled Loop Coordination
+// MARK: Run Loop
 
 private extension SequentialExecutor {
-    func reconcile(with policy: Policy) {
-        let previousPolicy = loopPolicy
-        let shouldRestartScheduledExecutionLoop = activeLoop != nil
-            && previousPolicy.interval != nil
-            && policy.interval != nil
-            && previousPolicy.interval != policy.interval
-        loopPolicy = policy
-        if previousPolicy != policy {
-            emit(.policyUpdated(previous: previousPolicy, new: policy))
+    /// Alternates between waiting for a trigger and performing one execution until the
+    /// run is cancelled.
+    func drive() async {
+        while !Task.isCancelled {
+            switch await awaitTrigger() {
+            case .cancelled:
+                return
+            case .elapsed:
+                await perform(source: .scheduled, request: nil)
+            case let .immediate(request):
+                await perform(source: .runNow(requestID: request.id), request: request)
+            }
         }
-        if shouldRestartScheduledExecutionLoop {
-            stopScheduledExecutionLoop(reason: .policyUpdated)
-        }
-        reconcileLoopTask()
     }
 
-    func stopScheduledExecutionLoop(reason: LoopStopReason) {
-        guard let activeLoop else { return }
-        emit(.loopStopped(loopID: activeLoop.id, reason: reason))
-        activeLoop.task.cancel()
-        self.activeLoop = nil
-    }
+    /// Waits until the interval elapses or an immediate request is pending.
+    ///
+    /// A pending request is checked before any wait, so it preempts the schedule. A
+    /// change to the policy or a new request ends the current wait, and the loop
+    /// re-evaluates both. The wait and the change listener race as child tasks.
+    func awaitTrigger() async -> Trigger {
+        while true {
+            if Task.isCancelled { return .cancelled }
+            if let request = takePendingRequest() { return .immediate(request) }
 
-    func reconcileLoopTask() {
-        guard loopPolicy.interval != nil else {
-            stopScheduledExecutionLoop(reason: .policyDisabled)
-            return
-        }
+            let interval = policy.interval
+            if let interval {
+                emit(.waitStarted(interval: interval))
+            }
 
-        guard pendingImmediateExecutionCount == 0 else {
-            stopScheduledExecutionLoop(reason: .runNowRequested)
-            return
-        }
-
-        guard activeExecution == nil else { return }
-        guard activeLoop == nil else { return }
-
-        let loopID = nextID()
-        let clock = self.clock
-        emit(.loopStarted(loopID: loopID))
-        // The detached task first hops back onto the actor, so it cannot observe
-        // `activeLoop` before this synchronous assignment completes.
-        let task = Task<Void, Never>.detached { [weak self, clock] in
-            // The loop captures the executor weakly, so a sleeping loop does not keep it
-            // alive. The detached task waits outside actor isolation and hops back only
-            // to emit events and to start executions, each in its own replaceable task.
-            while let interval = await self?.beginScheduledWait(loopID: loopID) {
-                let waitOutcome: ScheduledWaitOutcome
-                do {
-                    try await clock.sleep(for: interval)
-                    try Task.checkCancellation()
-                    waitOutcome = .elapsed
-                } catch {
-                    // ContinuousClock.sleep is documented to throw only CancellationError,
-                    // so any error here means the wait was cancelled.
-                    waitOutcome = .cancelled
+            // Register the change listener in this job, before any child task runs, so a
+            // change that arrives between the checks above and the child's suspension is
+            // buffered rather than lost.
+            let listener = registerChangeListener()
+            defer { removeChangeListener(listener.id) }
+            let clock = self.clock
+            let outcome = await withTaskGroup(of: WaitOutcome.self, returning: WaitOutcome.self) { group in
+                group.addTask {
+                    for await _ in listener.stream {
+                        break
+                    }
+                    return Task.isCancelled ? .cancelled : .changed
                 }
-
-                guard await self?.completeScheduledWait(loopID: loopID, outcome: waitOutcome) == true else { break }
-                guard !Task.isCancelled else { break }
-                guard let executionTask = await self?.startScheduledExecution(loopID: loopID) else { break }
-                _ = await executionTask.value
-                guard !Task.isCancelled else { break }
+                if let interval {
+                    group.addTask {
+                        do {
+                            try await clock.sleep(for: interval)
+                            return .elapsed
+                        } catch {
+                            // ContinuousClock.sleep is documented to throw only CancellationError.
+                            return .cancelled
+                        }
+                    }
+                }
+                let first = await group.next() ?? .cancelled
+                group.cancelAll()
+                return first
             }
-            await self?.loopDidExit(loopID: loopID)
-        }
-        activeLoop = ActiveLoop(id: loopID, task: task)
-    }
 
-    enum ScheduledWaitOutcome: Sendable {
-        case elapsed
-        case cancelled
-    }
-
-    func beginScheduledWait(loopID: UInt) -> Duration? {
-        guard activeLoop?.id == loopID, let interval = loopPolicy.interval else { return nil }
-        emit(.waitStarted(loopID: loopID, interval: interval))
-        return interval
-    }
-
-    func completeScheduledWait(loopID: UInt, outcome: ScheduledWaitOutcome) -> Bool {
-        switch outcome {
-        case .cancelled:
-            emit(.waitCancelled(loopID: loopID))
-            return false
-        case .elapsed:
-            guard activeLoop?.id == loopID else {
-                emit(.waitCancelled(loopID: loopID))
-                return false
+            switch outcome {
+            case .elapsed:
+                emit(.intervalElapsed)
+                return .elapsed
+            case .changed:
+                if interval != nil {
+                    emit(.waitCancelled)
+                }
+            case .cancelled:
+                if interval != nil {
+                    emit(.waitCancelled)
+                }
+                return .cancelled
             }
-            emit(.intervalElapsed(loopID: loopID))
-            return true
         }
     }
 
-    func startScheduledExecution(loopID: UInt) -> Task<ExecutionCompletion, Never>? {
-        guard activeLoop?.id == loopID else { return nil }
-        guard loopPolicy.interval != nil else { return nil }
-        guard pendingImmediateExecutionCount == 0 else { return nil }
-        guard activeExecution == nil else { return nil }
-        return startExecution(source: .scheduledLoop(loopID: loopID))
-    }
-
-    func loopDidExit(loopID: UInt) {
-        emit(.loopExited(loopID: loopID))
-        guard activeLoop?.id == loopID else { return }
-        activeLoop = nil
-        reconcileLoopTask()
-    }
-}
-
-// MARK: Immediate Request Coordination
-
-private extension SequentialExecutor {
-    func runImmediately() async -> RunNowResult {
-        let requestID = nextID()
-        latestImmediateExecutionRequestID = requestID
-        emit(.requested(requestID: requestID))
-        pendingImmediateExecutionCount += 1
-        // Every accepted request contributes exactly once to the handoff count.
-        // Reconcile from one shared exit path because actor continuations waiting on
-        // different executions may resume in any order.
-        defer {
-            precondition(pendingImmediateExecutionCount > 0)
-            pendingImmediateExecutionCount -= 1
-            reconcileLoopTask()
-        }
-
-        // Latest request wins. Stop the loop, cancel the current execution if needed,
-        // and replace it with a new immediate execution.
-        stopScheduledExecutionLoop(reason: .runNowRequested)
-        await cancelCurrentExecutionAndWait()
-
-        // After resuming from the suspension point, a newer runNow() request
-        // may have already been queued. Only the latest request should proceed;
-        // older requests yield to avoid parallel executions.
-        guard latestImmediateExecutionRequestID == requestID else {
-            return .superseded(requestID: requestID, byRequestID: latestImmediateExecutionRequestID)
-        }
-
-        let task = startExecution(source: .runNow(requestID: requestID))
-        let completion = await task.value
-
-        return RunNowResult(completion)
-    }
-
-    func cancelCurrentExecutionAndWait() async {
-        guard let activeExecution else { return }
-        activeExecution.task.cancel()
-        _ = await activeExecution.task.value
-    }
-}
-
-// MARK: Execution Lifecycle
-
-private extension SequentialExecutor {
-    enum ExecutionOutcome: Sendable {
-        case finished
-        case cancelled
-        case failed(any Error & Sendable)
-    }
-
-    struct ExecutionCompletion: Sendable {
-        let context: ExecutionContext
-        let outcome: ExecutionOutcome
-    }
-
-    func startExecution(source: ExecutionSource) -> Task<ExecutionCompletion, Never> {
+    /// Performs one execution and reports its outcome.
+    ///
+    /// The execution runs in a task the run owns: `perform` always awaits it, a newer
+    /// immediate request cancels it synchronously through `runNow()`, and cancelling
+    /// the run is forwarded to it. Nothing outlives this call.
+    func perform(source: ExecutionSource, request: PendingRequest?) async {
         let execute = self.execute
-        let executionID = nextID()
-        let context = ExecutionContext(executionID: executionID, source: source)
+        let context = ExecutionContext(executionID: nextID(), source: source)
         // Emit synchronously so `executionStarted` is ordered before any event the
-        // actor processes next. The task body only emits the execution's outcome.
-        emit(.executionStarted(executionID: executionID, source: source))
-        let task = Task { [weak self, execute] in
-            let outcome: ExecutionOutcome
-            do {
-                try Task.checkCancellation()
-                try await execute(context)
-                try Task.checkCancellation()
-                outcome = .finished
-            } catch is CancellationError {
-                outcome = .cancelled
-            } catch {
-                outcome = .failed(error)
-            }
+        // actor processes next.
+        emit(.executionStarted(executionID: context.executionID, source: source))
 
-            await self?.finishExecution(executionID: executionID, source: source, outcome: outcome)
-            return ExecutionCompletion(context: context, outcome: outcome)
+        let task = Task {
+            await Self.execute(execute, context: context)
         }
-        activeExecution = ActiveExecution(id: executionID, task: task)
-        return task
-    }
-
-    func finishExecution(executionID: UInt, source: ExecutionSource, outcome: ExecutionOutcome) {
-        switch outcome {
-        case .finished: emit(.executionFinished(executionID: executionID, source: source))
-        case .cancelled: emit(.executionCancelled(executionID: executionID, source: source))
-        case let .failed(error): emit(.executionFailed(executionID: executionID, source: source, error: error))
+        activeExecution = task
+        let outcome = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
         }
-
-        guard activeExecution?.id == executionID else { return }
         activeExecution = nil
 
-        guard pendingImmediateExecutionCount == 0 else { return }
-        reconcileLoopTask()
+        let result: RunNowResult
+        switch outcome {
+        case .finished:
+            emit(.executionFinished(executionID: context.executionID, source: source))
+            result = .finished(context)
+        case .cancelled:
+            emit(.executionCancelled(executionID: context.executionID, source: source))
+            result = .cancelled(context)
+        case let .failed(error):
+            emit(.executionFailed(executionID: context.executionID, source: source, error: error))
+            result = .failed(context, error)
+        }
+        request?.continuation.resume(returning: result)
+    }
+
+    /// Runs `execute` off the actor and classifies how it exited.
+    ///
+    /// A cancellation request takes precedence over how the closure exited: once the
+    /// task is cancelled, a normal return or a thrown error both count as cancelled.
+    nonisolated static func execute(
+        _ execute: @Sendable (ExecutionContext) async throws -> Void,
+        context: ExecutionContext
+    ) async -> ExecutionOutcome {
+        do {
+            try Task.checkCancellation()
+            try await execute(context)
+            return Task.isCancelled ? .cancelled : .finished
+        } catch is CancellationError {
+            return .cancelled
+        } catch {
+            return Task.isCancelled ? .cancelled : .failed(error)
+        }
+    }
+
+    func takePendingRequest() -> PendingRequest? {
+        defer { pendingRequest = nil }
+        return pendingRequest
     }
 }
 
-private extension SequentialExecutor.RunNowResult {
-    init(_ completion: SequentialExecutor.ExecutionCompletion) {
-        switch completion.outcome {
-        case .finished:
-            self = .finished(completion.context)
-        case .cancelled:
-            self = .cancelled(completion.context)
-        case let .failed(error):
-            self = .failed(completion.context, error)
+// MARK: Change Notification
+
+private extension SequentialExecutor {
+    /// A one-slot stream that receives one element per `notifyChange()` while registered.
+    struct ChangeListener {
+        let id: UUID
+        let stream: AsyncStream<Void>
+    }
+
+    /// Registers a listener for the next change.
+    ///
+    /// A change that arrives after registration and before the listener is consumed is
+    /// buffered, so a caller that checks its condition and registers in the same actor
+    /// job cannot miss a change between the two.
+    func registerChangeListener() -> ChangeListener {
+        let id = UUID()
+        var continuation: AsyncStream<Void>.Continuation?
+        let stream = AsyncStream<Void>(bufferingPolicy: .bufferingNewest(1)) {
+            continuation = $0
+        }
+
+        guard let continuation else {
+            preconditionFailure("AsyncStream failed to provide a continuation.")
+        }
+
+        changeWaiters[id] = continuation
+        return ChangeListener(id: id, stream: stream)
+    }
+
+    func removeChangeListener(_ id: UUID) {
+        changeWaiters[id] = nil
+    }
+
+    /// Suspends until the actor's coordination state changes or the current task is
+    /// cancelled. Callers check their condition first, in the same actor job.
+    func awaitChange() async {
+        let listener = registerChangeListener()
+        defer { removeChangeListener(listener.id) }
+        for await _ in listener.stream {
+            return
+        }
+    }
+
+    /// Wakes every suspended `awaitChange()` caller.
+    func notifyChange() {
+        for continuation in changeWaiters.values {
+            continuation.yield()
         }
     }
 }
@@ -573,7 +442,7 @@ private extension SequentialExecutor {
 // MARK: Identifiers
 
 private extension SequentialExecutor {
-    /// Issues the next identifier shared by requests, loops, and executions.
+    /// Issues the next identifier shared by requests, runs, and executions.
     func nextID() -> UInt {
         lastIssuedID &+= 1
         return lastIssuedID

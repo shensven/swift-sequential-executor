@@ -65,7 +65,7 @@ final class ViewModel {
     // MARK: - Policy
 
     enum RunLoopSelection: String, CaseIterable, Identifiable {
-        case disabled
+        case paused
         case interval
 
         var id: String {
@@ -74,7 +74,7 @@ final class ViewModel {
     }
 
     struct RunLoopConfig: Equatable {
-        var selection: RunLoopSelection = .disabled
+        var selection: RunLoopSelection = .paused
         var intervalSeconds: Double = 5.0
     }
 
@@ -103,7 +103,7 @@ final class ViewModel {
 
     private var policy: SequentialExecutor.Policy {
         switch runLoopConfig.selection {
-        case .disabled: return .disabled
+        case .paused: return .paused
         case .interval: return .interval(.milliseconds(runLoopIntervalMilliseconds))
         }
     }
@@ -114,22 +114,24 @@ final class ViewModel {
 
     @ObservationIgnored private var waitCountdown = CountdownState()
     @ObservationIgnored private var executionCountdown = CountdownState()
-    @ObservationIgnored private var waitLoopID: UInt?
     // The execute closure owns execution UI state: `beginExecution` sets it and the
     // `defer` in `runExecution` clears it before the executor emits the outcome event.
     private var activeExecution: ActiveExecution?
     @ObservationIgnored private var pendingPolicy: SequentialExecutor.Policy?
     @ObservationIgnored private var policyUpdateTask: Task<Void, Never>?
     @ObservationIgnored private var eventObservationTask: Task<Void, Never>?
+    @ObservationIgnored private var runTask: Task<Void, Never>?
     @ObservationIgnored private lazy var executor = makeExecutor()
 
     init() {
         refreshNextExecutionPreview()
         startObservingEvents()
+        startRun()
         updatePolicy()
     }
 
     deinit {
+        runTask?.cancel()
         policyUpdateTask?.cancel()
         eventObservationTask?.cancel()
     }
@@ -262,7 +264,6 @@ final class ViewModel {
         )
 
         self.activeExecution = activeExecution
-        waitLoopID = nil
         waitCountdown.reset()
 
         switch activeExecution.plan.failureMode {
@@ -345,8 +346,8 @@ final class ViewModel {
 
     private func runLoopConfig(from policy: SequentialExecutor.Policy) -> RunLoopConfig {
         switch policy {
-        case .disabled:
-            return .init(selection: .disabled, intervalSeconds: 5.0)
+        case .paused:
+            return .init(selection: .paused, intervalSeconds: 5.0)
         case let .interval(interval):
             return .init(
                 selection: .interval,
@@ -374,6 +375,16 @@ final class ViewModel {
         await policyUpdateTask?.value
     }
 
+    /// The run lives as long as this view model; cancelling it ends waiting and any
+    /// in-flight execution. The task captures only the executor so it does not keep
+    /// the view model alive.
+    private func startRun() {
+        let executor = self.executor
+        runTask = Task {
+            await executor.run()
+        }
+    }
+
     private func startObservingEvents() {
         eventObservationTask?.cancel()
         eventObservationTask = Task { @MainActor [weak self] in
@@ -394,26 +405,12 @@ final class ViewModel {
         // state is owned by the execute closure, which has already cleared
         // `activeExecution` by the time the matching outcome event arrives.
         switch event.kind {
-        case let .waitStarted(loopID, interval):
+        case let .waitStarted(interval):
             guard activeExecution == nil else { break }
             executionCountdown.reset()
-            waitLoopID = loopID
             waitCountdown.start(milliseconds: interval.millisecondsValue)
 
-        case let .waitCancelled(loopID), let .intervalElapsed(loopID):
-            if waitLoopID == loopID {
-                waitLoopID = nil
-                waitCountdown.reset()
-            }
-
-        case let .loopStopped(loopID, _), let .loopExited(loopID):
-            if waitLoopID == loopID {
-                waitLoopID = nil
-                waitCountdown.reset()
-            }
-
-        case .executionStarted:
-            waitLoopID = nil
+        case .waitCancelled, .intervalElapsed, .runEnded, .executionStarted:
             waitCountdown.reset()
 
         case .executionFinished, .executionCancelled, .executionFailed:
@@ -421,14 +418,14 @@ final class ViewModel {
 
         case let .policyUpdated(_, new): appliedRunLoopConfig = runLoopConfig(from: new)
 
-        case .requested, .loopStarted: break
+        case .requested, .runStarted: break
         }
     }
 
     private func append(_ event: SequentialExecutor.Event) {
         eventList.append(.init(
             title: event.kind.title,
-            subtitle: "\(timestampText(event.emittedAt)) • \(event.kind.detail)"
+            subtitle: [timestampText(event.emittedAt), event.kind.detail].filter { !$0.isEmpty }.joined(separator: " • ")
         ))
         trimEventHistory()
     }
@@ -522,9 +519,8 @@ private extension SequentialExecutor.Event.Kind {
         case .executionCancelled: "executionCancelled"
         case .executionFailed: "executionFailed"
         case .policyUpdated: "policyUpdated"
-        case .loopStarted: "loopStarted"
-        case .loopStopped: "loopStopped"
-        case .loopExited: "loopExited"
+        case .runStarted: "runStarted"
+        case .runEnded: "runEnded"
         case .waitStarted: "waitStarted"
         case .waitCancelled: "waitCancelled"
         case .intervalElapsed: "intervalElapsed"
@@ -543,16 +539,13 @@ private extension SequentialExecutor.Event.Kind {
             "executionID: \(executionID) • \(source.description) • \(String(describing: error))"
         case let .policyUpdated(previous, new):
             "from: \(previous.description) • to: \(new.description)"
-        case let .loopStarted(loopID),
-             let .loopExited(loopID):
-            "loopID: \(loopID)"
-        case let .loopStopped(loopID, reason):
-            "loopID: \(loopID) • \(reason.description)"
-        case let .waitStarted(loopID, interval):
-            "loopID: \(loopID) • interval: \(interval.millisecondsValue)ms"
-        case let .waitCancelled(loopID),
-             let .intervalElapsed(loopID):
-            "loopID: \(loopID)"
+        case let .runStarted(runID),
+             let .runEnded(runID):
+            "runID: \(runID)"
+        case let .waitStarted(interval):
+            "interval: \(interval.millisecondsValue)ms"
+        case .waitCancelled, .intervalElapsed:
+            ""
         }
     }
 }
@@ -560,7 +553,7 @@ private extension SequentialExecutor.Event.Kind {
 private extension SequentialExecutor.Policy {
     nonisolated var description: String {
         switch self {
-        case .disabled: return "disabled"
+        case .paused: return "paused"
         case let .interval(interval): return "interval: \(interval.millisecondsValue)ms"
         }
     }
@@ -570,17 +563,8 @@ private extension SequentialExecutor.ExecutionSource {
     nonisolated var description: String {
         switch self {
         case let .runNow(requestID): "runNow #\(requestID)"
-        case let .scheduledLoop(loopID): "scheduledLoop \(loopID)"
+        case .scheduled: "scheduled"
         }
     }
 }
 
-private extension SequentialExecutor.LoopStopReason {
-    nonisolated var description: String {
-        switch self {
-        case .runNowRequested: "runNowRequested"
-        case .policyDisabled: "policyDisabled"
-        case .policyUpdated: "policyUpdated"
-        }
-    }
-}

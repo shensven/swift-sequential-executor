@@ -39,7 +39,7 @@ struct PlaygroundView: View {
                                             isActive: wait.isActive,
                                             left: wait.leftSeconds,
                                             total: wait.totalSeconds,
-                                            inactiveStateText: wait.totalSeconds > 0 ? "Idle" : "Disabled"
+                                            inactiveStateText: wait.totalSeconds > 0 ? "Idle" : "Paused"
                                         )
                                     },
                                     header: { Text("Waiting").font(.headline) },
@@ -112,7 +112,7 @@ struct PlaygroundView: View {
                             label: {
                                 Text("Next Interval")
                             }
-                        ).disabled(runLoopDraft.selection == .disabled)
+                        ).disabled(runLoopDraft.selection == .paused)
                     },
                     header: {
                         sectionHeader(
