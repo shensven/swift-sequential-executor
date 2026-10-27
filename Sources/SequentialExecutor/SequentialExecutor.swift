@@ -159,37 +159,19 @@ public actor SequentialExecutor {
     }
 
     /// Controls whether the scheduled loop should run and how long it waits.
-    public struct Policy: Sendable, Equatable {
-        /// Describes whether the loop is disabled or running with a fixed delay.
-        public enum RunLoop: Sendable, Equatable {
-            /// Disables future scheduled executions.
-            case disabled
-            /// Waits for the duration before each scheduled execution.
-            ///
-            /// The duration must be greater than zero. The first execution waits for
-            /// one full duration, and each later wait starts after the prior execution
-            /// exits. This is fixed-delay scheduling rather than fixed-rate scheduling.
-            case interval(Duration)
-        }
-
-        /// The scheduled loop configuration.
-        public private(set) var runLoop: RunLoop = .disabled
-
-        /// Creates a loop policy.
+    public enum Policy: Sendable, Equatable {
+        /// Disables future scheduled executions.
+        case disabled
+        /// Waits for the duration before each scheduled execution.
         ///
-        /// - Parameter runLoop: The desired loop mode.
-        public init(runLoop: RunLoop = .disabled) {
-            switch runLoop {
-            case .disabled:
-                self.runLoop = .disabled
-            case let .interval(interval):
-                precondition(interval > .zero, "SequentialExecutor.Policy.runLoop interval must be greater than zero.")
-                self.runLoop = .interval(interval)
-            }
-        }
+        /// The duration must be greater than zero; ``SequentialExecutor/updatePolicy(_:)``
+        /// traps otherwise. The first execution waits for one full duration, and each
+        /// later wait starts after the prior execution exits. This is fixed-delay
+        /// scheduling rather than fixed-rate scheduling.
+        case interval(Duration)
 
         fileprivate var interval: Duration? {
-            if case let .interval(interval) = runLoop {
+            if case let .interval(interval) = self {
                 return interval
             }
             return nil
@@ -218,7 +200,7 @@ public actor SequentialExecutor {
     private var eventContinuations: [UUID: AsyncStream<Event>.Continuation] = [:]
 
     private var activeLoop: ActiveLoop?
-    private var loopPolicy = Policy()
+    private var loopPolicy = Policy.disabled
 
     private var activeExecution: ActiveExecution?
 
@@ -301,7 +283,12 @@ public extension SequentialExecutor {
     /// or changing the policy cancels an active interval wait, but does not cancel an
     /// execution that has already started. That execution is allowed to exit before
     /// the executor applies the next scheduled wait.
+    ///
+    /// - Precondition: An `interval` policy must carry a duration greater than zero.
     func updatePolicy(_ policy: Policy) {
+        if case let .interval(interval) = policy {
+            precondition(interval > .zero, "SequentialExecutor.Policy.interval must be greater than zero.")
+        }
         reconcile(with: policy)
     }
 

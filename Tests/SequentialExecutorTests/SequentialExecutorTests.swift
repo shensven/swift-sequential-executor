@@ -802,7 +802,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
             }
         )
 
-        await executor.updatePolicy(.init(runLoop: .interval(.seconds(60))))
+        await executor.updatePolicy(.interval(.seconds(60)))
 
         let results = await withTaskGroup(
             of: SequentialExecutor.RunNowResult.self,
@@ -836,11 +836,11 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
             Issue.record(
                 "Concurrent handoff lost liveness in round \(round): requested=\(requestedCount), settled=\(settledCount), started=\(startedCount), cancelled=\(cancelledCount), finished=\(finishedCount), loopStarted=\(loopStartCount), latestFinished=\(latestRequestFinished)"
             )
-            await executor.updatePolicy(.init())
+            await executor.updatePolicy(.disabled)
             return
         }
 
-        await executor.updatePolicy(.init())
+        await executor.updatePolicy(.disabled)
     }
 }
 
@@ -855,8 +855,8 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    let previousPolicy = SequentialExecutor.Policy()
-    let updatedPolicy = SequentialExecutor.Policy(runLoop: .interval(.milliseconds(50)))
+    let previousPolicy = SequentialExecutor.Policy.disabled
+    let updatedPolicy = SequentialExecutor.Policy.interval(.milliseconds(50))
 
     await executor.updatePolicy(updatedPolicy)
 
@@ -881,7 +881,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    let policy = SequentialExecutor.Policy(runLoop: .interval(.milliseconds(100)))
+    let policy = SequentialExecutor.Policy.interval(.milliseconds(100))
 
     await executor.updatePolicy(policy)
     await executor.updatePolicy(policy)
@@ -894,7 +894,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
     #expect(loopStartedCount == 1)
     #expect(loopStoppedCount == 0)
 
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
 }
 
 @Test func enablingScheduling_startsLoopAndInitialWait() async {
@@ -906,15 +906,15 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    await executor.updatePolicy(.init())
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
+    await executor.updatePolicy(.disabled)
+    await executor.updatePolicy(.interval(.milliseconds(50)))
 
     let snapshot = await events.wait { events in
         events.contains(where: { $0.isLoopStarted })
             && events.contains(where: { $0.isWaitStarted })
     }
 
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
 
     #expect(snapshot != nil)
 }
@@ -931,14 +931,14 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    await executor.updatePolicy(.init(runLoop: .interval(.seconds(60))))
+    await executor.updatePolicy(.interval(.seconds(60)))
 
     let snapshot = events.snapshot()
     #expect(snapshot.contains(where: { $0.isLoopStarted }))
     #expect(snapshot.contains(where: { $0.isScheduledExecutionStarted }) == false)
     #expect(invocations.value() == 0)
 
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
 }
 
 @Test func updatingLoopInterval_restartsTheLoop() async throws {
@@ -952,7 +952,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    await executor.updatePolicy(.init(runLoop: .interval(initialInterval)))
+    await executor.updatePolicy(.interval(initialInterval))
 
     let initialSnapshot = try #require(await events.wait { events in
         events.contains(where: { $0.waitInterval == initialInterval })
@@ -962,7 +962,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         return loopID
     }.first)
 
-    await executor.updatePolicy(.init(runLoop: .interval(updatedInterval)))
+    await executor.updatePolicy(.interval(updatedInterval))
 
     let snapshot = try #require(await events.wait { events in
         let replacementWaitStarted = events.contains { event in
@@ -980,7 +980,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         return replacementWaitStarted && initialLoopStopped && initialWaitCancelled
     })
 
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
 
     let stoppedInitialLoop = snapshot.contains { event in
         guard case let .loopStopped(loopID, reason) = event.kind else { return false }
@@ -1006,12 +1006,12 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(10))))
+    await executor.updatePolicy(.interval(.milliseconds(10)))
     try #require(await events.wait { events in
         events.contains(where: { $0.isScheduledExecutionStarted })
     } != nil)
 
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
     #expect(events.snapshot().contains(where: { $0.isScheduledExecutionCancelled }) == false)
 
     executionGate.open()
@@ -1037,12 +1037,12 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
     )
     let updatedInterval = Duration.seconds(60)
 
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(10))))
+    await executor.updatePolicy(.interval(.milliseconds(10)))
     try #require(await events.wait { events in
         events.contains(where: { $0.isScheduledExecutionStarted })
     } != nil)
 
-    await executor.updatePolicy(.init(runLoop: .interval(updatedInterval)))
+    await executor.updatePolicy(.interval(updatedInterval))
     #expect(events.snapshot().contains(where: { $0.isScheduledExecutionCancelled }) == false)
     executionGate.open()
 
@@ -1051,7 +1051,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
             && events.contains(where: { $0.waitInterval == updatedInterval })
     }
 
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
 
     #expect(snapshot != nil)
     #expect(events.snapshot().contains(where: { $0.isScheduledExecutionCancelled }) == false)
@@ -1066,13 +1066,13 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
+    await executor.updatePolicy(.interval(.milliseconds(50)))
 
     try #require(await events.wait { events in
         events.contains(where: { $0.isLoopStarted })
     } != nil)
 
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
 
     let snapshot = await events.wait { events in
         events.contains(where: { $0.loopStopReason == .policyDisabled })
@@ -1090,13 +1090,13 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
+    await executor.updatePolicy(.interval(.milliseconds(50)))
 
     try #require(await events.wait { events in
         events.contains(where: { $0.isLoopStarted })
     } != nil)
 
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
 
     let snapshot = await events.wait { events in
         events.contains(where: { $0.isLoopExited })
@@ -1115,8 +1115,8 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
             }
         )
 
-        await executor.updatePolicy(.init(runLoop: .interval(.seconds(60))))
-        await executor.updatePolicy(.init())
+        await executor.updatePolicy(.interval(.seconds(60)))
+        await executor.updatePolicy(.disabled)
 
         let snapshot = await events.wait { events in
             events.contains(where: { $0.isLoopExited })
@@ -1149,7 +1149,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
     )
     let executorReference: @Sendable () -> SequentialExecutor? = { [weak executor] in executor }
 
-    await executor?.updatePolicy(.init(runLoop: .interval(.seconds(60))))
+    await executor?.updatePolicy(.interval(.seconds(60)))
     #expect(await events.wait { events in
         events.contains(where: { $0.isWaitStarted })
     } != nil)
@@ -1174,11 +1174,11 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
+    await executor.updatePolicy(.interval(.milliseconds(50)))
 
     #expect(await probe.wait(timeout: .seconds(3), until: { $0.finishedCount >= 2 }) != nil)
 
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
 
     let snapshot = probe.snapshot()
     #expect(snapshot.finishedCount >= 2)
@@ -1214,12 +1214,12 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(10))))
+    await executor.updatePolicy(.interval(.milliseconds(10)))
     let snapshot = await events.wait { events in
         events.contains(where: { $0.isScheduledExecutionFailed })
             && events.contains(where: { $0.isScheduledExecutionFinished })
     }
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
 
     #expect(snapshot != nil)
     #expect(invocations.value() >= 2)
@@ -1241,13 +1241,13 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
+    await executor.updatePolicy(.interval(.milliseconds(50)))
 
     let snapshot = try #require(await events.wait { events in
         events.contains(where: { $0.isScheduledExecutionFinished })
     })
 
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
 
     let startedIndex = try #require(snapshot.firstIndex(where: { $0.isScheduledExecutionStarted }))
     let finishedIndex = try #require(snapshot.firstIndex(where: { $0.isScheduledExecutionFinished }))
@@ -1280,7 +1280,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
+    await executor.updatePolicy(.interval(.milliseconds(50)))
 
     try #require(await events.wait { events in
         events.contains(where: { $0.isScheduledExecutionStarted })
@@ -1296,7 +1296,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
     scheduledExecutionGate.open()
 
     let immediateResult = await immediateRequest.value
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
 
     let snapshot = events.snapshot()
     let scheduledCancelledIndex = snapshot.firstIndex(where: { $0.isScheduledExecutionCancelled })
@@ -1335,7 +1335,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    await executor.updatePolicy(.init(runLoop: .interval(.milliseconds(50))))
+    await executor.updatePolicy(.interval(.milliseconds(50)))
 
     #expect(await events.wait { events in
         events.contains(where: { $0.isWaitStarted })
@@ -1348,7 +1348,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         return loopStartCount >= 2
     }
 
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
 
     #expect(snapshot != nil)
 }
@@ -1364,12 +1364,12 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         }
     )
 
-    await executor.updatePolicy(.init(runLoop: .interval(.seconds(60))))
+    await executor.updatePolicy(.interval(.seconds(60)))
     let result = await executor.runNow()
     let snapshot = await events.wait { events in
         events.filter(\.isLoopStarted).count >= 2
     }
-    await executor.updatePolicy(.init())
+    await executor.updatePolicy(.disabled)
 
     guard case let .failed(context, error) = result else {
         Issue.record("Expected the immediate execution to fail.")

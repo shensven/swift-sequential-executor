@@ -25,7 +25,7 @@ let executor = SequentialExecutor {
     try await Task.sleep(for: .seconds(2))
 }
 
-await executor.updatePolicy(.init(runLoop: .interval(.seconds(5))))
+await executor.updatePolicy(.interval(.seconds(5)))
 // await executor.runNow()
 ```
 

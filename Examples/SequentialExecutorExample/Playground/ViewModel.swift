@@ -109,8 +109,8 @@ final class ViewModel {
 
     private var policy: SequentialExecutor.Policy {
         switch runLoopConfig.selection {
-        case .disabled: return .init()
-        case .interval: return .init(runLoop: .interval(.milliseconds(runLoopIntervalMilliseconds)))
+        case .disabled: return .disabled
+        case .interval: return .interval(.milliseconds(runLoopIntervalMilliseconds))
         }
     }
 
@@ -368,7 +368,7 @@ final class ViewModel {
     }
 
     private func runLoopConfig(from policy: SequentialExecutor.Policy) -> RunLoopConfig {
-        switch policy.runLoop {
+        switch policy {
         case .disabled:
             return .init(selection: .disabled, intervalSeconds: 5.0)
         case let .interval(interval):
@@ -611,7 +611,7 @@ private extension SequentialExecutor.Event.Kind {
 
 private extension SequentialExecutor.Policy {
     nonisolated var description: String {
-        switch runLoop {
+        switch self {
         case .disabled: return "disabled"
         case let .interval(interval): return "interval: \(interval.millisecondsValue)ms"
         }

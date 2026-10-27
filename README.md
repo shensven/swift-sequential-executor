@@ -75,7 +75,7 @@ let executor = SequentialExecutor(
     }
 )
 
-await executor.updatePolicy(.init(runLoop: .interval(.seconds(5))))
+await executor.updatePolicy(.interval(.seconds(5)))
 // await executor.runNow()
 ```
 
