@@ -17,6 +17,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Swift 6.4
+          - swift: "6.4"
+            os: windows-2025
+          - swift: "6.4"
+            os: windows-2022
+
           # Swift 6.3
           - swift: "6.3"
             os: windows-2025
