@@ -56,12 +56,6 @@ final class ViewModel {
         var isFailureRequested = false
     }
 
-    struct PendingExecutionStart {
-        let executionID: UInt
-        let source: SequentialExecutor.ExecutionSource
-        var isFailureRequested = false
-    }
-
     struct EventRecord: Identifiable {
         let id = UUID()
         let title: String
@@ -102,7 +96,7 @@ final class ViewModel {
     private(set) var eventList: [EventRecord] = []
     private(set) var nextExecutionPreviewDurationMilliseconds = 9000
     var isExecuting: Bool {
-        activeExecution != nil || pendingExecutionStart != nil
+        activeExecution != nil
     }
 
     // MARK: - Internals
@@ -121,11 +115,8 @@ final class ViewModel {
     @ObservationIgnored private var waitCountdown = CountdownState()
     @ObservationIgnored private var executionCountdown = CountdownState()
     @ObservationIgnored private var waitLoopID: UInt?
-    // `.executionStarted` can reach the UI before the main-actor simulator has
-    // finished preparing the matching execution plan. Keep a lightweight placeholder
-    // so the wait ring does not briefly reappear and `Fail Now` can still target
-    // the correct execution.
-    private var pendingExecutionStart: PendingExecutionStart?
+    // The execute closure owns execution UI state: `beginExecution` sets it and the
+    // `defer` in `runExecution` clears it before the executor emits the outcome event.
     private var activeExecution: ActiveExecution?
     @ObservationIgnored private var pendingPolicy: SequentialExecutor.Policy?
     @ObservationIgnored private var policyUpdateTask: Task<Void, Never>?
@@ -167,15 +158,9 @@ final class ViewModel {
     }
 
     func requestFailure() {
-        if var activeExecution {
-            activeExecution.isFailureRequested = true
-            self.activeExecution = activeExecution
-            return
-        }
-
-        guard var pendingExecutionStart else { return }
-        pendingExecutionStart.isFailureRequested = true
-        self.pendingExecutionStart = pendingExecutionStart
+        guard var activeExecution else { return }
+        activeExecution.isFailureRequested = true
+        self.activeExecution = activeExecution
     }
 
     func clearEventHistory() {
@@ -270,18 +255,12 @@ final class ViewModel {
             }
         }
 
-        let isFailureRequested = pendingExecutionStart?.executionID == context.executionID
-            ? pendingExecutionStart?.isFailureRequested ?? false
-            : false
-
         let activeExecution = ActiveExecution(
             executionID: context.executionID,
             source: context.source,
-            plan: .init(durationMilliseconds: duration, failureMode: failureMode),
-            isFailureRequested: isFailureRequested
+            plan: .init(durationMilliseconds: duration, failureMode: failureMode)
         )
 
-        pendingExecutionStart = nil
         self.activeExecution = activeExecution
         waitLoopID = nil
         waitCountdown.reset()
@@ -300,9 +279,6 @@ final class ViewModel {
         if activeExecution?.executionID == executionID {
             activeExecution = nil
             executionCountdown.reset()
-        }
-        if pendingExecutionStart?.executionID == executionID {
-            pendingExecutionStart = nil
         }
         refreshNextExecutionPreview()
     }
@@ -414,13 +390,12 @@ final class ViewModel {
     private func handle(_ event: SequentialExecutor.Event) {
         append(event)
 
-        // The wait ring stays event-driven. Execution UI state is bridged through
-        // `pendingExecutionStart` and `activeExecution` so the demo still matches
-        // real execution start even when event delivery and the main-actor simulator
-        // interleave differently.
+        // Events drive the log, the wait ring, and the applied policy. Execution UI
+        // state is owned by the execute closure, which has already cleared
+        // `activeExecution` by the time the matching outcome event arrives.
         switch event.kind {
         case let .waitStarted(loopID, interval):
-            guard activeExecution == nil, pendingExecutionStart == nil else { break }
+            guard activeExecution == nil else { break }
             executionCountdown.reset()
             waitLoopID = loopID
             waitCountdown.start(milliseconds: interval.millisecondsValue)
@@ -437,36 +412,12 @@ final class ViewModel {
                 waitCountdown.reset()
             }
 
-        case let .executionStarted(executionID, source):
-            if activeExecution?.executionID != executionID {
-                let wasFailureRequested = pendingExecutionStart?.executionID == executionID
-                    ? pendingExecutionStart?.isFailureRequested ?? false
-                    : false
-                pendingExecutionStart = .init(
-                    executionID: executionID,
-                    source: source,
-                    isFailureRequested: wasFailureRequested
-                )
-            } else {
-                pendingExecutionStart = nil
-            }
+        case .executionStarted:
             waitLoopID = nil
             waitCountdown.reset()
 
-        case let .executionFinished(executionID, _), let .executionCancelled(executionID, _), let .executionFailed(executionID, _, _):
-            let cleanedVisibleExecution =
-                activeExecution?.executionID == executionID || pendingExecutionStart?.executionID == executionID
-
-            if activeExecution?.executionID == executionID {
-                activeExecution = nil
-                executionCountdown.reset()
-            }
-            if pendingExecutionStart?.executionID == executionID {
-                pendingExecutionStart = nil
-            }
-            if cleanedVisibleExecution {
-                refreshNextExecutionPreview()
-            }
+        case .executionFinished, .executionCancelled, .executionFailed:
+            break
 
         case let .policyUpdated(_, new): appliedRunLoopConfig = runLoopConfig(from: new)
 
