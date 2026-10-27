@@ -619,7 +619,7 @@ enum BoundedBufferingScenario: Sendable {
     case oldest
     case newest
 
-    var policy: SequentialExecutor.EventBufferingPolicy {
+    var policy: AsyncStream<SequentialExecutor.Event>.Continuation.BufferingPolicy {
         switch self {
         case .oldest: return .bufferingOldest(1)
         case .newest: return .bufferingNewest(1)

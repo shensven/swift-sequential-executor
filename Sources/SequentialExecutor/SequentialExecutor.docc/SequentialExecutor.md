@@ -87,7 +87,7 @@ execution is already running, the new delay applies after it exits.
 
 The optional ``SequentialExecutor/EventHandler`` observes events synchronously
 on the executor's coordination path. Keep it lightweight. Use
-``SequentialExecutor/events()`` for asynchronous or actor-isolated processing.
+``SequentialExecutor/events(bufferingPolicy:)`` for asynchronous or actor-isolated processing.
 
 An event stream receives only events emitted after its subscription is created;
 it does not replay earlier events. The default stream uses an unbounded buffer.

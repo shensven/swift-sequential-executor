@@ -97,7 +97,7 @@ public actor SequentialExecutor {
     /// Observes lifecycle events synchronously on the executor's coordination path.
     ///
     /// Handlers must be safe to transfer across isolation domains. Keep handlers
-    /// lightweight and use ``events()`` for actor-isolated or asynchronous work.
+    /// lightweight and use ``events(bufferingPolicy:)`` for actor-isolated or asynchronous work.
     public typealias EventHandler = @Sendable (Event) -> Void
 
     /// Describes what triggered an execution.
@@ -178,20 +178,6 @@ public actor SequentialExecutor {
         }
     }
 
-    /// Controls how event subscribers buffer lifecycle events.
-    public enum EventBufferingPolicy: Sendable, Equatable {
-        /// Buffers every event until the consumer receives it.
-        case unbounded
-        /// Buffers the oldest `limit` events and drops new events while the buffer is full.
-        ///
-        /// `limit` must be nonnegative. Dropped events are not reported separately.
-        case bufferingOldest(Int)
-        /// Buffers the newest `limit` events and drops the oldest buffered event first.
-        ///
-        /// `limit` must be nonnegative. Dropped events are not reported separately.
-        case bufferingNewest(Int)
-    }
-
     // MARK: Stored Properties
 
     private let execute: @Sendable (ExecutionContext) async throws -> Void
@@ -225,7 +211,7 @@ public actor SequentialExecutor {
     ///     The executor invokes this `@Sendable` callback synchronously on its
     ///     coordination path in the same order the events are emitted. The handler
     ///     cannot synchronously access state isolated elsewhere, such as MainActor UI
-    ///     state. Keep it lightweight and use ``events()`` for isolated or asynchronous
+    ///     state. Keep it lightweight and use ``events(bufferingPolicy:)`` for isolated or asynchronous
     ///     event processing.
     public init(
         execute: @escaping @Sendable (ExecutionContext) async throws -> Void,
@@ -318,22 +304,16 @@ public extension SequentialExecutor {
     /// Returns an async sequence view of the executor lifecycle events.
     ///
     /// The stream observes future `Event` values emitted after this subscription is
-    /// created; it does not replay earlier events. It uses an unbounded buffer, so a
-    /// subscriber that cannot keep up can retain an increasing number of events.
-    func events() -> AsyncStream<Event> {
-        events(bufferingPolicy: .unbounded)
-    }
-
-    /// Returns an async sequence view of the executor lifecycle events.
-    ///
-    /// The stream observes future `Event` values emitted after this subscription is
-    /// created; it does not replay earlier events. It delivers them asynchronously
-    /// according to the provided buffering policy. Bounded policies may drop events
-    /// without emitting an additional notification.
-    func events(bufferingPolicy: EventBufferingPolicy) -> AsyncStream<Event> {
+    /// created; it does not replay earlier events. The default policy buffers every
+    /// event, so a subscriber that cannot keep up retains an increasing number of
+    /// events. Bounded policies may drop events without emitting an additional
+    /// notification.
+    func events(
+        bufferingPolicy: AsyncStream<Event>.Continuation.BufferingPolicy = .unbounded
+    ) -> AsyncStream<Event> {
         let subscriberID = UUID()
         var continuation: AsyncStream<Event>.Continuation?
-        let stream = AsyncStream<Event>(bufferingPolicy: bufferingPolicy.asyncStreamPolicy) {
+        let stream = AsyncStream<Event>(bufferingPolicy: bufferingPolicy) {
             continuation = $0
         }
 
@@ -348,16 +328,6 @@ public extension SequentialExecutor {
         }
         eventContinuations[subscriberID] = continuation
         return stream
-    }
-}
-
-private extension SequentialExecutor.EventBufferingPolicy {
-    var asyncStreamPolicy: AsyncStream<SequentialExecutor.Event>.Continuation.BufferingPolicy {
-        switch self {
-        case .unbounded: return .unbounded
-        case let .bufferingOldest(limit): return .bufferingOldest(limit)
-        case let .bufferingNewest(limit): return .bufferingNewest(limit)
-        }
     }
 }
 
