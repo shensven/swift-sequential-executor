@@ -19,6 +19,8 @@ jobs:
         include:
           # Swift 6.4
           - swift: "6.4"
+            os: ubuntu-26.04
+          - swift: "6.4"
             os: ubuntu-24.04
           - swift: "6.4"
             os: ubuntu-22.04
