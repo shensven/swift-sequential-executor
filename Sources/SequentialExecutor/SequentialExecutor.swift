@@ -212,12 +212,10 @@ public actor SequentialExecutor {
     private let clock = ContinuousClock()
     private var eventContinuations: [UUID: AsyncStream<Event>.Continuation] = [:]
 
-    private var loopTask: Task<Void, Never>?
-    private var loopTaskID: UUID?
+    private var activeLoop: ActiveLoop?
     private var loopPolicy = Policy()
 
-    private var executionTask: Task<ExecutionCompletion, Never>?
-    private var executionTaskID: UUID?
+    private var activeExecution: ActiveExecution?
 
     private var latestImmediateExecutionRequestID: UInt = 0
     private var pendingImmediateExecutionCount = 0
@@ -263,9 +261,28 @@ public actor SequentialExecutor {
     }
 
     deinit {
-        loopTask?.cancel()
-        executionTask?.cancel()
+        activeLoop?.task.cancel()
+        activeExecution?.task.cancel()
         eventContinuations.values.forEach { $0.finish() }
+    }
+}
+
+// MARK: Active Work
+
+private extension SequentialExecutor {
+    /// The scheduled loop that currently owns waiting and scheduled executions.
+    ///
+    /// Pairing the identifier with its task guarantees that a tracked loop always
+    /// has an identifier, and that clearing one clears the other.
+    struct ActiveLoop {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
+    /// The execution that is currently running, regardless of its trigger.
+    struct ActiveExecution {
+        let id: UUID
+        let task: Task<ExecutionCompletion, Never>
     }
 }
 
@@ -356,7 +373,7 @@ private extension SequentialExecutor.EventBufferingPolicy {
 private extension SequentialExecutor {
     func reconcile(with policy: Policy) {
         let previousPolicy = loopPolicy
-        let shouldRestartScheduledExecutionLoop = loopTask != nil
+        let shouldRestartScheduledExecutionLoop = activeLoop != nil
             && previousPolicy.interval != nil
             && policy.interval != nil
             && previousPolicy.interval != policy.interval
@@ -371,11 +388,10 @@ private extension SequentialExecutor {
     }
 
     func stopScheduledExecutionLoop(reason: LoopStopReason) {
-        guard loopTask != nil, let loopID = loopTaskID else { return }
-        emit(.loopStopped(loopID: loopID, reason: reason))
-        loopTask?.cancel()
-        loopTask = nil
-        loopTaskID = nil
+        guard let activeLoop else { return }
+        emit(.loopStopped(loopID: activeLoop.id, reason: reason))
+        activeLoop.task.cancel()
+        self.activeLoop = nil
     }
 
     func reconcileLoopTask() {
@@ -389,14 +405,15 @@ private extension SequentialExecutor {
             return
         }
 
-        guard executionTask == nil else { return }
-        guard loopTask == nil else { return }
+        guard activeExecution == nil else { return }
+        guard activeLoop == nil else { return }
 
         let loopID = UUID.sequentialExecutorV7()
         let clock = self.clock
-        loopTaskID = loopID
         emit(.loopStarted(loopID: loopID))
-        loopTask = Task.detached { [weak self, clock] in
+        // The detached task first hops back onto the actor, so it cannot observe
+        // `activeLoop` before this synchronous assignment completes.
+        let task = Task<Void, Never>.detached { [weak self, clock] in
             // Waiting happens outside actor isolation so a sleeping loop does not keep
             // the executor alive. Each execution still runs in its own replaceable task.
             while let interval = await self?.beginScheduledWait(loopID: loopID) {
@@ -419,6 +436,7 @@ private extension SequentialExecutor {
             }
             await self?.loopDidExit(loopID: loopID)
         }
+        activeLoop = ActiveLoop(id: loopID, task: task)
     }
 
     enum ScheduledWaitOutcome: Sendable {
@@ -428,7 +446,7 @@ private extension SequentialExecutor {
     }
 
     func beginScheduledWait(loopID: UUID) -> Duration? {
-        guard loopTaskID == loopID, let interval = loopPolicy.interval else { return nil }
+        guard activeLoop?.id == loopID, let interval = loopPolicy.interval else { return nil }
         emit(.waitStarted(loopID: loopID, interval: interval))
         return interval
     }
@@ -442,7 +460,7 @@ private extension SequentialExecutor {
             emit(.waitFailed(loopID: loopID, error: error))
             return false
         case .elapsed:
-            guard loopTaskID == loopID else {
+            guard activeLoop?.id == loopID else {
                 emit(.waitCancelled(loopID: loopID))
                 return false
             }
@@ -452,22 +470,17 @@ private extension SequentialExecutor {
     }
 
     func startScheduledExecution(loopID: UUID) -> Task<ExecutionCompletion, Never>? {
-        guard loopTaskID == loopID else { return nil }
+        guard activeLoop?.id == loopID else { return nil }
         guard loopPolicy.interval != nil else { return nil }
         guard pendingImmediateExecutionCount == 0 else { return nil }
-        guard executionTask == nil else { return nil }
+        guard activeExecution == nil else { return nil }
         return startExecution(source: .scheduledLoop(loopID: loopID))
     }
 
     func loopDidExit(loopID: UUID) {
         emit(.loopExited(loopID: loopID))
-        clearLoopTaskIfCurrent(loopID)
-    }
-
-    func clearLoopTaskIfCurrent(_ taskId: UUID) {
-        guard loopTaskID == taskId else { return }
-        loopTask = nil
-        loopTaskID = nil
+        guard activeLoop?.id == loopID else { return }
+        activeLoop = nil
         reconcileLoopTask()
     }
 }
@@ -508,9 +521,9 @@ private extension SequentialExecutor {
     }
 
     func cancelCurrentExecutionAndWait() async {
-        guard let executionTask else { return }
-        executionTask.cancel()
-        _ = await executionTask.value
+        guard let activeExecution else { return }
+        activeExecution.task.cancel()
+        _ = await activeExecution.task.value
     }
 }
 
@@ -550,8 +563,7 @@ private extension SequentialExecutor {
             await self?.finishExecution(executionID: executionID, source: source, outcome: outcome)
             return ExecutionCompletion(context: context, outcome: outcome)
         }
-        executionTask = task
-        executionTaskID = executionID
+        activeExecution = ActiveExecution(id: executionID, task: task)
         return task
     }
 
@@ -562,9 +574,8 @@ private extension SequentialExecutor {
         case let .failed(error): emit(.executionFailed(executionID: executionID, source: source, error: error))
         }
 
-        guard executionTaskID == executionID else { return }
-        executionTask = nil
-        executionTaskID = nil
+        guard activeExecution?.id == executionID else { return }
+        activeExecution = nil
 
         guard pendingImmediateExecutionCount == 0 else { return }
         reconcileLoopTask()
