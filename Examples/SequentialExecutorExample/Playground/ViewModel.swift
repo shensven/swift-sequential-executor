@@ -7,7 +7,15 @@
 
 import Foundation
 import Observation
+import OSLog
 import SequentialExecutor
+
+/// Executor events go through the unified logging system so Xcode and Console can
+/// filter them by subsystem and category and stamp each line with time and level.
+nonisolated private let executorLogger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "SequentialExecutorExample",
+    category: "SequentialExecutor"
+)
 
 @MainActor
 @Observable
@@ -454,7 +462,12 @@ final class ViewModel {
                 try await self.runExecution(context: context)
             },
             eventHandler: { event in
-                print("[SequentialExecutor] \(event.kind.title) • \(event.kind.detail)")
+                let message = [event.kind.title, event.kind.detail].filter { !$0.isEmpty }.joined(separator: " • ")
+                if case .executionFailed = event.kind {
+                    executorLogger.error("\(message, privacy: .public)")
+                } else {
+                    executorLogger.info("\(message, privacy: .public)")
+                }
             }
         )
     }
@@ -554,7 +567,7 @@ private extension SequentialExecutor.Policy {
     nonisolated var description: String {
         switch self {
         case .paused: return "paused"
-        case let .interval(interval): return "interval: \(interval.millisecondsValue)ms"
+        case let .interval(interval): return "interval \(interval.millisecondsValue)ms"
         }
     }
 }
