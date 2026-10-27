@@ -37,8 +37,9 @@ public actor SequentialExecutor {
             case requested(requestID: UInt)
             /// Reports that a single execution started.
             ///
-            /// The executor emits this immediately before awaiting `execute(context)`
-            /// for the matching `executionID`.
+            /// The executor emits this synchronously when it selects the execution,
+            /// before awaiting `execute(context)` for the matching `executionID`. It is
+            /// always ordered before that execution's finished, cancelled, or failed event.
             case executionStarted(executionID: UUID, source: ExecutionSource)
             /// Reports that a single execution finished successfully.
             case executionFinished(executionID: UUID, source: ExecutionSource)
@@ -228,7 +229,7 @@ public actor SequentialExecutor {
     ///   - execute: The single unit of work to run each time the executor fires.
     ///     The executor passes the current execution context, including the
     ///     execution identifier and the trigger source. The executor emits the
-    ///     matching `executionStarted` event immediately before awaiting this closure.
+    ///     matching `executionStarted` event synchronously before awaiting this closure.
     ///     This closure is expected to cooperate with Swift Concurrency cancellation.
     ///     When `runNow()` needs to replace an in-flight execution, it cancels the
     ///     current task and then waits for this closure to return. If the closure does
@@ -545,9 +546,10 @@ private extension SequentialExecutor {
         let execute = self.execute
         let executionID = UUID.sequentialExecutorV7()
         let context = ExecutionContext(executionID: executionID, source: source)
+        // Emit synchronously so `executionStarted` is ordered before any event the
+        // actor processes next. The task body only emits the execution's outcome.
+        emit(.executionStarted(executionID: executionID, source: source))
         let task = Task { [weak self, execute] in
-            await self?.emit(.executionStarted(executionID: executionID, source: source))
-
             let outcome: ExecutionOutcome
             do {
                 try Task.checkCancellation()
