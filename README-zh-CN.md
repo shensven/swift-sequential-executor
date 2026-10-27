@@ -28,8 +28,8 @@
 
 | 平台 | Swift 版本 | 安装方式 | 状态 |
 | --- | --- | --- | --- |
-| macOS 13.0+<br>iOS 16.0+<br>tvOS 16.0+<br>watchOS 9.0+<br>visionOS 1.0+ | Swift 6.0+ / Xcode 16.0+ | Swift Package Manager | [![Apple Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-apple.yml/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-apple.yml) |
-| Linux | Swift 6.0+ | Swift Package Manager | [![Linux Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-linux.yml/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-linux.yml) |
+| macOS 13.0+<br>iOS 16.0+<br>tvOS 16.0+<br>watchOS 9.0+<br>visionOS 1.0+ | Swift 6.1+ / Xcode 16.3+ | Swift Package Manager | [![Apple Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-apple.yml/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-apple.yml) |
+| Linux | Swift 6.1+ | Swift Package Manager | [![Linux Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-linux.yml/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-linux.yml) |
 | Windows | Swift 6.1+ | Swift Package Manager | [![Windows Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-windows.yml/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-windows.yml) |
 
 ## 安装
@@ -319,6 +319,7 @@ API 表面随之调整：
 
 | 1.x | 2.0 |
 | --- | --- |
+| Swift 6.0+ | Swift 6.1+。`events(bufferingPolicy:)` 的参数类型 `AsyncStream<Event>.Continuation.BufferingPolicy` 从 Swift 6.1 起才是 `Sendable` |
 | `updatePolicy(_:)` 会启动由执行器持有的循环 | 从你持有的任务里调用 `run()`，策略只控制等待；取消该任务即停止一切 |
 | `Policy()` 或 `.init()` | `.paused` |
 | `.init(runLoop: .interval(d))` | `.interval(d)` |

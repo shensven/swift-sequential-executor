@@ -28,8 +28,8 @@ Run async tasks one at a time, on schedule or on demand.
 
 | Platform | Swift Version | Installation | Status |
 | --- | --- | --- | --- |
-| macOS 13.0+<br>iOS 16.0+<br>tvOS 16.0+<br>watchOS 9.0+<br>visionOS 1.0+ | Swift 6.0+ / Xcode 16.0+ | Swift Package Manager | [![Apple Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-apple.yml/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-apple.yml) |
-| Linux | Swift 6.0+ | Swift Package Manager | [![Linux Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-linux.yml/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-linux.yml) |
+| macOS 13.0+<br>iOS 16.0+<br>tvOS 16.0+<br>watchOS 9.0+<br>visionOS 1.0+ | Swift 6.1+ / Xcode 16.3+ | Swift Package Manager | [![Apple Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-apple.yml/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-apple.yml) |
+| Linux | Swift 6.1+ | Swift Package Manager | [![Linux Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-linux.yml/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-linux.yml) |
 | Windows | Swift 6.1+ | Swift Package Manager | [![Windows Tests](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-windows.yml/badge.svg)](https://github.com/shensven/swift-sequential-executor/actions/workflows/tests-windows.yml) |
 
 ## Installation
@@ -336,6 +336,7 @@ follows from that.
 
 | 1.x | 2.0 |
 | --- | --- |
+| Swift 6.0+ | Swift 6.1+. `events(bufferingPolicy:)` takes `AsyncStream<Event>.Continuation.BufferingPolicy`, which is `Sendable` only from Swift 6.1. |
 | `updatePolicy(_:)` started a loop owned by the executor | Call `run()` from a task you own; the policy only controls waiting. Cancel that task to stop everything. |
 | `Policy()` or `.init()` | `.paused` |
 | `.init(runLoop: .interval(d))` | `.interval(d)` |
