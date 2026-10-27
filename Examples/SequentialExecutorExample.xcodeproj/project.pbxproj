@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 100;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -26,12 +26,10 @@
 /* Begin PBXFrameworksBuildPhase section */
 		06DC64F42F633B9300E87F00 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 				06DC65162F633D8300E87F00 /* SequentialExecutor in Frameworks */,
 				06DC650D2F633D3E00E87F00 /* SequentialExecutor in Frameworks */,
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
@@ -64,8 +62,6 @@
 				06DC64F52F633B9300E87F00 /* Resources */,
 			);
 			buildRules = (
-			);
-			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
 				06DC64F92F633B9300E87F00 /* SequentialExecutorExample */,
@@ -106,7 +102,7 @@
 			packageReferences = (
 				06DC65142F633D8300E87F00 /* XCLocalSwiftPackageReference "../../swift-sequential-executor" */,
 			);
-			preferredProjectObjectVersion = 77;
+			preferredProjectObjectVersion = 100;
 			productRefGroup = 06DC64F82F633B9300E87F00 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -119,25 +115,21 @@
 /* Begin PBXResourcesBuildPhase section */
 		06DC64F52F633B9300E87F00 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		06DC64F32F633B9300E87F00 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		06DC65002F633B9500E87F00 /* Debug */ = {
+		06DC65002F633B9500E87F00 /* Debug configuration for PBXProject "SequentialExecutorExample" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -198,7 +190,7 @@
 			};
 			name = Debug;
 		};
-		06DC65012F633B9500E87F00 /* Release */ = {
+		06DC65012F633B9500E87F00 /* Release configuration for PBXProject "SequentialExecutorExample" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -251,7 +243,7 @@
 			};
 			name = Release;
 		};
-		06DC65032F633B9500E87F00 /* Debug */ = {
+		06DC65032F633B9500E87F00 /* Debug configuration for PBXNativeTarget "SequentialExecutorExample" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -293,7 +285,7 @@
 			};
 			name = Debug;
 		};
-		06DC65042F633B9500E87F00 /* Release */ = {
+		06DC65042F633B9500E87F00 /* Release configuration for PBXNativeTarget "SequentialExecutorExample" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -341,19 +333,17 @@
 		06DC64F22F633B9300E87F00 /* Build configuration list for PBXProject "SequentialExecutorExample" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				06DC65002F633B9500E87F00 /* Debug */,
-				06DC65012F633B9500E87F00 /* Release */,
+				06DC65002F633B9500E87F00 /* Debug configuration for PBXProject "SequentialExecutorExample" */,
+				06DC65012F633B9500E87F00 /* Release configuration for PBXProject "SequentialExecutorExample" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		06DC65022F633B9500E87F00 /* Build configuration list for PBXNativeTarget "SequentialExecutorExample" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				06DC65032F633B9500E87F00 /* Debug */,
-				06DC65042F633B9500E87F00 /* Release */,
+				06DC65032F633B9500E87F00 /* Debug configuration for PBXNativeTarget "SequentialExecutorExample" */,
+				06DC65042F633B9500E87F00 /* Release configuration for PBXNativeTarget "SequentialExecutorExample" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
