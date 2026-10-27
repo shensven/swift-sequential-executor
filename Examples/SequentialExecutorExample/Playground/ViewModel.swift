@@ -50,14 +50,14 @@ final class ViewModel {
     }
 
     struct ActiveExecution {
-        let executionID: UUID
+        let executionID: UInt
         let source: SequentialExecutor.ExecutionSource
         let plan: ExecutionPlan
         var isFailureRequested = false
     }
 
     struct PendingExecutionStart {
-        let executionID: UUID
+        let executionID: UInt
         let source: SequentialExecutor.ExecutionSource
         var isFailureRequested = false
     }
@@ -120,7 +120,7 @@ final class ViewModel {
 
     @ObservationIgnored private var waitCountdown = CountdownState()
     @ObservationIgnored private var executionCountdown = CountdownState()
-    @ObservationIgnored private var waitLoopID: UUID?
+    @ObservationIgnored private var waitLoopID: UInt?
     // `.executionStarted` can reach the UI before the main-actor simulator has
     // finished preparing the matching execution plan. Keep a lightweight placeholder
     // so the wait ring does not briefly reappear and `Fail Now` can still target
@@ -296,7 +296,7 @@ final class ViewModel {
         return activeExecution
     }
 
-    private func endExecution(executionID: UUID) {
+    private func endExecution(executionID: UInt) {
         if activeExecution?.executionID == executionID {
             activeExecution = nil
             executionCountdown.reset()
@@ -340,7 +340,7 @@ final class ViewModel {
         }
     }
 
-    private func shouldFailExecution(executionID: UUID) -> Bool {
+    private func shouldFailExecution(executionID: UInt) -> Bool {
         guard var activeExecution else { return false }
         guard activeExecution.executionID == executionID else { return false }
         guard activeExecution.isFailureRequested else { return false }
@@ -588,23 +588,23 @@ private extension SequentialExecutor.Event.Kind {
         case let .executionStarted(executionID, source),
              let .executionFinished(executionID, source),
              let .executionCancelled(executionID, source):
-            "executionID: \(executionID.shortID) • \(source.description)"
+            "executionID: \(executionID) • \(source.description)"
         case let .executionFailed(executionID, source, error):
-            "executionID: \(executionID.shortID) • \(source.description) • \(String(describing: error))"
+            "executionID: \(executionID) • \(source.description) • \(String(describing: error))"
         case let .policyUpdated(previous, new):
             "from: \(previous.description) • to: \(new.description)"
         case let .loopStarted(loopID),
              let .loopExited(loopID):
-            "loopID: \(loopID.shortID)"
+            "loopID: \(loopID)"
         case let .loopStopped(loopID, reason):
-            "loopID: \(loopID.shortID) • \(reason.description)"
+            "loopID: \(loopID) • \(reason.description)"
         case let .waitStarted(loopID, interval):
-            "loopID: \(loopID.shortID) • interval: \(interval.millisecondsValue)ms"
+            "loopID: \(loopID) • interval: \(interval.millisecondsValue)ms"
         case let .waitCancelled(loopID),
              let .intervalElapsed(loopID):
-            "loopID: \(loopID.shortID)"
+            "loopID: \(loopID)"
         case let .waitFailed(loopID, error):
-            "loopID: \(loopID.shortID) • \(String(describing: error))"
+            "loopID: \(loopID) • \(String(describing: error))"
         }
     }
 }
@@ -622,7 +622,7 @@ private extension SequentialExecutor.ExecutionSource {
     nonisolated var description: String {
         switch self {
         case let .runNow(requestID): "runNow #\(requestID)"
-        case let .scheduledLoop(loopID): "scheduledLoop \(loopID.shortID)"
+        case let .scheduledLoop(loopID): "scheduledLoop \(loopID)"
         }
     }
 }
@@ -634,11 +634,5 @@ private extension SequentialExecutor.LoopStopReason {
         case .policyDisabled: "policyDisabled"
         case .policyUpdated: "policyUpdated"
         }
-    }
-}
-
-private extension UUID {
-    nonisolated var shortID: String {
-        String(uuidString.suffix(8))
     }
 }

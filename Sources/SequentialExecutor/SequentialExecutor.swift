@@ -24,6 +24,10 @@ import Foundation
 public actor SequentialExecutor {
     /// Reports the executor's observable lifecycle.
     ///
+    /// Request, loop, and execution identifiers are issued from one monotonically
+    /// increasing counter per executor, so within one executor no two of them share
+    /// a number and a larger identifier was always issued later.
+    ///
     /// The events are grouped into:
     /// - immediate requests
     /// - execution lifecycle
@@ -40,13 +44,13 @@ public actor SequentialExecutor {
             /// The executor emits this synchronously when it selects the execution,
             /// before awaiting `execute(context)` for the matching `executionID`. It is
             /// always ordered before that execution's finished, cancelled, or failed event.
-            case executionStarted(executionID: UUID, source: ExecutionSource)
+            case executionStarted(executionID: UInt, source: ExecutionSource)
             /// Reports that a single execution finished successfully.
-            case executionFinished(executionID: UUID, source: ExecutionSource)
+            case executionFinished(executionID: UInt, source: ExecutionSource)
             /// Reports that a single execution was cancelled.
-            case executionCancelled(executionID: UUID, source: ExecutionSource)
+            case executionCancelled(executionID: UInt, source: ExecutionSource)
             /// Reports that a single execution failed with an error.
-            case executionFailed(executionID: UUID, source: ExecutionSource, error: any Error & Sendable)
+            case executionFailed(executionID: UInt, source: ExecutionSource, error: any Error & Sendable)
 
             /// Reports that the loop policy changed.
             case policyUpdated(previous: Policy, new: Policy)
@@ -55,23 +59,23 @@ public actor SequentialExecutor {
             ///
             /// For a given `loopID`, this event is emitted before any waiting,
             /// stopping, or exit event.
-            case loopStarted(loopID: UUID)
+            case loopStarted(loopID: UInt)
             /// Reports that the current scheduled loop was asked to stop.
-            case loopStopped(loopID: UUID, reason: LoopStopReason)
+            case loopStopped(loopID: UInt, reason: LoopStopReason)
             /// Reports that the scheduled loop fully exited.
             ///
             /// Events from different loop identifiers may interleave. In particular,
             /// an old loop can exit after its replacement has already started.
-            case loopExited(loopID: UUID)
+            case loopExited(loopID: UInt)
 
             /// Reports that the loop started waiting for the next interval.
-            case waitStarted(loopID: UUID, interval: Duration)
+            case waitStarted(loopID: UInt, interval: Duration)
             /// Reports that the current loop wait was cancelled.
-            case waitCancelled(loopID: UUID)
+            case waitCancelled(loopID: UInt)
             /// Reports that the current loop wait failed with an error.
-            case waitFailed(loopID: UUID, error: any Error & Sendable)
+            case waitFailed(loopID: UInt, error: any Error & Sendable)
             /// Reports that the configured interval elapsed.
-            case intervalElapsed(loopID: UUID)
+            case intervalElapsed(loopID: UInt)
         }
 
         /// The time when the executor emitted this event on its coordination path.
@@ -101,7 +105,7 @@ public actor SequentialExecutor {
         /// Identifies an explicit `runNow()` request.
         case runNow(requestID: UInt)
         /// Identifies a scheduled loop tick.
-        case scheduledLoop(loopID: UUID)
+        case scheduledLoop(loopID: UInt)
     }
 
     /// Describes the execution currently being run.
@@ -109,7 +113,7 @@ public actor SequentialExecutor {
         /// Identifies this specific execution.
         ///
         /// The same identifier appears in the matching execution lifecycle events.
-        public let executionID: UUID
+        public let executionID: UInt
         /// Describes what triggered this execution.
         ///
         /// The same source appears in the matching execution lifecycle events.
@@ -120,7 +124,7 @@ public actor SequentialExecutor {
         /// - Parameters:
         ///   - executionID: The identifier for this execution.
         ///   - source: The trigger that started this execution.
-        public init(executionID: UUID, source: ExecutionSource) {
+        public init(executionID: UInt, source: ExecutionSource) {
             self.executionID = executionID
             self.source = source
         }
@@ -218,6 +222,7 @@ public actor SequentialExecutor {
 
     private var activeExecution: ActiveExecution?
 
+    private var lastIssuedID: UInt = 0
     private var latestImmediateExecutionRequestID: UInt = 0
     private var pendingImmediateExecutionCount = 0
 
@@ -276,13 +281,13 @@ private extension SequentialExecutor {
     /// Pairing the identifier with its task guarantees that a tracked loop always
     /// has an identifier, and that clearing one clears the other.
     struct ActiveLoop {
-        let id: UUID
+        let id: UInt
         let task: Task<Void, Never>
     }
 
     /// The execution that is currently running, regardless of its trigger.
     struct ActiveExecution {
-        let id: UUID
+        let id: UInt
         let task: Task<ExecutionCompletion, Never>
     }
 }
@@ -409,7 +414,7 @@ private extension SequentialExecutor {
         guard activeExecution == nil else { return }
         guard activeLoop == nil else { return }
 
-        let loopID = UUID.sequentialExecutorV7()
+        let loopID = nextID()
         let clock = self.clock
         emit(.loopStarted(loopID: loopID))
         // The detached task first hops back onto the actor, so it cannot observe
@@ -446,13 +451,13 @@ private extension SequentialExecutor {
         case failed(any Error & Sendable)
     }
 
-    func beginScheduledWait(loopID: UUID) -> Duration? {
+    func beginScheduledWait(loopID: UInt) -> Duration? {
         guard activeLoop?.id == loopID, let interval = loopPolicy.interval else { return nil }
         emit(.waitStarted(loopID: loopID, interval: interval))
         return interval
     }
 
-    func completeScheduledWait(loopID: UUID, outcome: ScheduledWaitOutcome) -> Bool {
+    func completeScheduledWait(loopID: UInt, outcome: ScheduledWaitOutcome) -> Bool {
         switch outcome {
         case .cancelled:
             emit(.waitCancelled(loopID: loopID))
@@ -470,7 +475,7 @@ private extension SequentialExecutor {
         }
     }
 
-    func startScheduledExecution(loopID: UUID) -> Task<ExecutionCompletion, Never>? {
+    func startScheduledExecution(loopID: UInt) -> Task<ExecutionCompletion, Never>? {
         guard activeLoop?.id == loopID else { return nil }
         guard loopPolicy.interval != nil else { return nil }
         guard pendingImmediateExecutionCount == 0 else { return nil }
@@ -478,7 +483,7 @@ private extension SequentialExecutor {
         return startExecution(source: .scheduledLoop(loopID: loopID))
     }
 
-    func loopDidExit(loopID: UUID) {
+    func loopDidExit(loopID: UInt) {
         emit(.loopExited(loopID: loopID))
         guard activeLoop?.id == loopID else { return }
         activeLoop = nil
@@ -490,8 +495,8 @@ private extension SequentialExecutor {
 
 private extension SequentialExecutor {
     func runImmediately() async -> RunNowResult {
-        latestImmediateExecutionRequestID &+= 1
-        let requestID = latestImmediateExecutionRequestID
+        let requestID = nextID()
+        latestImmediateExecutionRequestID = requestID
         emit(.requested(requestID: requestID))
         pendingImmediateExecutionCount += 1
         // Every accepted request contributes exactly once to the handoff count.
@@ -544,7 +549,7 @@ private extension SequentialExecutor {
 
     func startExecution(source: ExecutionSource) -> Task<ExecutionCompletion, Never> {
         let execute = self.execute
-        let executionID = UUID.sequentialExecutorV7()
+        let executionID = nextID()
         let context = ExecutionContext(executionID: executionID, source: source)
         // Emit synchronously so `executionStarted` is ordered before any event the
         // actor processes next. The task body only emits the execution's outcome.
@@ -569,7 +574,7 @@ private extension SequentialExecutor {
         return task
     }
 
-    func finishExecution(executionID: UUID, source: ExecutionSource, outcome: ExecutionOutcome) {
+    func finishExecution(executionID: UInt, source: ExecutionSource, outcome: ExecutionOutcome) {
         switch outcome {
         case .finished: emit(.executionFinished(executionID: executionID, source: source))
         case .cancelled: emit(.executionCancelled(executionID: executionID, source: source))
@@ -613,42 +618,12 @@ private extension SequentialExecutor {
     }
 }
 
-// MARK: Utilities
+// MARK: Identifiers
 
-private extension UUID {
-    /// Generates a UUIDv7-style identifier for executor loop and execution IDs.
-    ///
-    /// The executor uses time-ordered IDs so loop and execution logs are easier to
-    /// read in chronological order.
-    static func sequentialExecutorV7() -> UUID {
-        var random = SystemRandomNumberGenerator()
-        let timestamp = unixMilliseconds()
-        let randA = UInt16.random(in: 0 ... 0x0FFF, using: &random)
-        let randB = UInt64.random(in: 0 ... 0x3FFF_FFFF_FFFF_FFFF, using: &random)
-
-        let uuid: uuid_t = (
-            UInt8((timestamp >> 40) & 0xFF),
-            UInt8((timestamp >> 32) & 0xFF),
-            UInt8((timestamp >> 24) & 0xFF),
-            UInt8((timestamp >> 16) & 0xFF),
-            UInt8((timestamp >> 8) & 0xFF),
-            UInt8(timestamp & 0xFF),
-            UInt8(0x70 | UInt8((randA >> 8) & 0x0F)),
-            UInt8(randA & 0xFF),
-            UInt8(0x80 | UInt8((randB >> 56) & 0x3F)),
-            UInt8((randB >> 48) & 0xFF),
-            UInt8((randB >> 40) & 0xFF),
-            UInt8((randB >> 32) & 0xFF),
-            UInt8((randB >> 24) & 0xFF),
-            UInt8((randB >> 16) & 0xFF),
-            UInt8((randB >> 8) & 0xFF),
-            UInt8(randB & 0xFF)
-        )
-        return UUID(uuid: uuid)
-    }
-
-    /// Returns the current Unix timestamp in milliseconds.
-    private static func unixMilliseconds() -> UInt64 {
-        UInt64(Date().timeIntervalSince1970 * 1000)
+private extension SequentialExecutor {
+    /// Issues the next identifier shared by requests, loops, and executions.
+    func nextID() -> UInt {
+        lastIssuedID &+= 1
+        return lastIssuedID
     }
 }

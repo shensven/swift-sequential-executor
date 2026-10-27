@@ -318,9 +318,9 @@ private extension SequentialExecutor.Event {
 
 private enum ExecutionEventSignature: Equatable {
     case requested(UInt)
-    case started(UUID, SequentialExecutor.ExecutionSource)
-    case finished(UUID, SequentialExecutor.ExecutionSource)
-    case cancelled(UUID, SequentialExecutor.ExecutionSource)
+    case started(UInt, SequentialExecutor.ExecutionSource)
+    case finished(UInt, SequentialExecutor.ExecutionSource)
+    case cancelled(UInt, SequentialExecutor.ExecutionSource)
 }
 
 private extension SequentialExecutor.Event {
@@ -385,6 +385,21 @@ private extension SequentialExecutor.Event {
     var isImmediateExecutionFailed: Bool {
         if case .executionFailed(_, .runNow(requestID: _), _) = kind { return true }
         return false
+    }
+}
+
+// MARK: Result Matchers
+
+private extension SequentialExecutor.RunNowResult {
+    /// The request identifier of a result whose execution actually started.
+    var startedRequestID: UInt? {
+        switch self {
+        case let .finished(context), let .cancelled(context), let .failed(context, _):
+            if case let .runNow(requestID) = context.source { return requestID }
+            return nil
+        case .superseded:
+            return nil
+        }
     }
 }
 
@@ -568,14 +583,14 @@ private extension SequentialExecutor.Event {
 
     let stream = await executor.events()
     let collector = recordEvents(from: stream, into: streamedEvents)
-    await executor.runNow()
+    let secondResult = await executor.runNow()
 
     let snapshot = try #require(await streamedEvents.wait { events in
         events.contains(where: { $0.isImmediateExecutionFinished })
     })
     collector.cancel()
 
-    #expect(snapshot.compactMap(\.requestedID) == [2])
+    #expect(snapshot.compactMap(\.requestedID) == [secondResult.startedRequestID].compactMap { $0 })
     #expect(snapshot.compactMap(\.executionSignature).count == 3)
 }
 
@@ -660,7 +675,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
     }
 
     try #require(await events.wait { events in
-        events.contains(where: { $0.requestedID == 2 })
+        events.filter(\.isRequested).count == 2
     } != nil)
     #expect(invocations.value() == 1)
     firstExecutionGate.open()
@@ -669,23 +684,23 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
     let secondResult = await secondRequest.value
 
     let snapshot = events.snapshot()
-    let requestedCount = snapshot.filter(\.isRequested).count
+    let requestedIDs = snapshot.compactMap(\.requestedID)
     let startedCount = snapshot.filter(\.isImmediateExecutionStarted).count
     let cancelledCount = snapshot.filter(\.isImmediateExecutionCancelled).count
     let finishedCount = snapshot.filter(\.isImmediateExecutionFinished).count
 
     #expect(invocations.value() == 2)
-    #expect(requestedCount == 2)
+    #expect(requestedIDs.count == 2)
     #expect(startedCount == 2)
     #expect(cancelledCount == 1)
     #expect(finishedCount == 1)
     if case let .cancelled(context) = firstResult {
-        #expect(context.source == .runNow(requestID: 1))
+        #expect(context.source == requestedIDs.first.map { .runNow(requestID: $0) })
     } else {
         Issue.record("Expected the first immediate execution to be cancelled.")
     }
     if case let .finished(context) = secondResult {
-        #expect(context.source == .runNow(requestID: 2))
+        #expect(context.source == requestedIDs.last.map { .runNow(requestID: $0) })
     } else {
         Issue.record("Expected the replacement immediate execution to finish.")
     }
@@ -748,21 +763,26 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
 
     #expect(executionSnapshot.maxInFlightCount == 1)
     #expect(executionSnapshot.startedCount == 2)
-    #expect(requestedIDs == [1, 2, 3])
-    #expect(startedIDs == [1, 3])
-    #expect(cancelledIDs == [1])
-    #expect(finishedIDs == [3])
+    // Identifiers come from one shared counter, so the test derives the three
+    // request identifiers from the emission order instead of assuming 1, 2, 3.
+    let firstRequestID = requestedIDs.first
+    let middleRequestID = requestedIDs.dropFirst().first
+    let latestRequestID = requestedIDs.last
+    #expect(requestedIDs.count == 3)
+    #expect(startedIDs == [firstRequestID, latestRequestID].compactMap { $0 })
+    #expect(cancelledIDs == [firstRequestID].compactMap { $0 })
+    #expect(finishedIDs == [latestRequestID].compactMap { $0 })
     if case let .cancelled(context) = firstResult {
-        #expect(context.source == .runNow(requestID: 1))
+        #expect(context.source == firstRequestID.map { .runNow(requestID: $0) })
     } else {
         Issue.record("Expected the first request to be cancelled after starting.")
     }
     switch (concurrentResultA, concurrentResultB) {
     case let (.superseded(requestID, byRequestID), .finished(context)),
          let (.finished(context), .superseded(requestID, byRequestID)):
-        #expect(requestID == 2)
-        #expect(byRequestID == 3)
-        #expect(context.source == .runNow(requestID: 3))
+        #expect(requestID == middleRequestID)
+        #expect(byRequestID == latestRequestID)
+        #expect(context.source == latestRequestID.map { .runNow(requestID: $0) })
     default:
         Issue.record("Expected one concurrent request to be superseded and the latest request to finish.")
     }
@@ -802,9 +822,10 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         let snapshot = events.snapshot()
         let requestedCount = snapshot.filter(\.isRequested).count
         let loopStartCount = snapshot.filter(\.isLoopStarted).count
+        let latestRequestID = snapshot.compactMap(\.requestedID).max()
         let latestRequestFinished = results.contains { result in
             guard case let .finished(context) = result else { return false }
-            return context.source == .runNow(requestID: 20)
+            return context.source == latestRequestID.map { .runNow(requestID: $0) }
         }
 
         guard requestedCount == 20, results.count == 20, latestRequestFinished, loopStartCount >= 2 else {
@@ -936,7 +957,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
     let initialSnapshot = try #require(await events.wait { events in
         events.contains(where: { $0.waitInterval == initialInterval })
     })
-    let initialLoopID = try #require(initialSnapshot.compactMap { event -> UUID? in
+    let initialLoopID = try #require(initialSnapshot.compactMap { event -> UInt? in
         guard case let .waitStarted(loopID, interval) = event.kind, interval == initialInterval else { return nil }
         return loopID
     }.first)
@@ -1287,7 +1308,7 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
     #expect(immediateStartedIndex != nil)
     #expect(immediateFinishedIndex != nil)
     if case let .finished(context) = immediateResult {
-        #expect(context.source == .runNow(requestID: 1))
+        #expect(context.source == snapshot.compactMap(\.requestedID).first.map { .runNow(requestID: $0) })
     } else {
         Issue.record("Expected the immediate replacement execution to finish.")
     }
@@ -1354,7 +1375,9 @@ func eventsStream_respectsBoundedBuffering(_ scenario: BoundedBufferingScenario)
         Issue.record("Expected the immediate execution to fail.")
         return
     }
-    #expect(context.source == .runNow(requestID: 1))
+    if case .runNow = context.source {} else {
+        Issue.record("Expected the failed execution to come from runNow.")
+    }
     #expect(error is StubError)
     #expect(snapshot != nil)
 }
