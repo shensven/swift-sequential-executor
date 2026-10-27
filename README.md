@@ -283,29 +283,11 @@ You can use it to debug and observe the runtime behavior of `SequentialExecutor`
 
 ![SequentialExecutor example app](Examples/SequentialExecutorExample.png)
 
-## Migrating from 1.x
+## Migration
 
-Version 2.0 is a breaking release. Fixed-delay scheduling and latest-request-wins
-handoff are unchanged; the executor no longer owns detached work, and the API surface
-follows from that.
+- [`1.x` to `2.x`](./documentation/migration_guides/v2_migration_guide.md)
 
-| 1.x | 2.0 |
-| --- | --- |
-| Swift 6.0+ | Swift 6.1+. `events(bufferingPolicy:)` takes `AsyncStream<Event>.Continuation.BufferingPolicy`, which is `Sendable` only from Swift 6.1. |
-| `updatePolicy(_:)` started a loop owned by the executor | Call `run()` from a task you own; the policy only controls waiting. Cancel that task to stop everything. |
-| `Policy()` or `.init()` | `.paused` |
-| `.init(runLoop: .interval(d))` | `.interval(d)` |
-| `Policy.runLoop`, `Policy.RunLoop` | Removed. Switch over `Policy` directly. |
-| `runNow()` worked without a loop | Requires an active `run()`; otherwise returns `.notRunning(requestID:)`. |
-| `loopID` and `executionID` are `UUID` | `UInt`, issued from the same per-executor counter as `requestID` |
-| `loopStarted`, `loopStopped(reason:)`, `loopExited`, `LoopStopReason` | `runStarted(runID:)` and `runEnded(runID:)` |
-| `waitStarted(loopID:interval:)`, `waitCancelled(loopID:)`, `intervalElapsed(loopID:)` | The same events without `loopID`; runs never overlap. |
-| `Event.Kind.waitFailed` | Removed. A wait ends with `waitCancelled` or `intervalElapsed`. |
-| `ExecutionSource.scheduledLoop(loopID:)` | `.scheduled` |
-| `events()` and `events(bufferingPolicy: EventBufferingPolicy)` | `events(bufferingPolicy:)` taking `AsyncStream<Event>.Continuation.BufferingPolicy`, default `.unbounded`. `EventBufferingPolicy` is removed; `events()` still compiles. |
-| Public `Event.init` and `ExecutionContext.init` | Internal. Read these values from events and `RunNowResult`. |
-| An error thrown after a cancellation request was `failed` | `cancelled`. A cancellation request decides the outcome. |
-| `executionStarted` emitted inside the execution task | Emitted synchronously when the execution is selected. See the ordering guarantees under Event Observation. |
+Be aware of the change to minimum Swift version, now Swift 6.1.
 
 ## License
 `swift-sequential-executor` is released under the MIT License. See [LICENSE](LICENSE) for details.

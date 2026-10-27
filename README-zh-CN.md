@@ -267,28 +267,11 @@ flowchart TD
 
 ![SequentialExecutor 示例应用](Examples/SequentialExecutorExample.png)
 
-## 从 1.x 迁移
+## 迁移
 
-2.0 是破坏性版本。固定延迟调度和“最新请求胜出”的轮替语义不变；执行器不再持有分离的工作，
-API 表面随之调整：
+- [`1.x` 到 `2.x`](./documentation/migration_guides/v2_migration_guide-zh-CN.md)
 
-| 1.x | 2.0 |
-| --- | --- |
-| Swift 6.0+ | Swift 6.1+。`events(bufferingPolicy:)` 的参数类型 `AsyncStream<Event>.Continuation.BufferingPolicy` 从 Swift 6.1 起才是 `Sendable` |
-| `updatePolicy(_:)` 会启动由执行器持有的循环 | 从你持有的任务里调用 `run()`，策略只控制等待；取消该任务即停止一切 |
-| `Policy()` 或 `.init()` | `.paused` |
-| `.init(runLoop: .interval(d))` | `.interval(d)` |
-| `Policy.runLoop`、`Policy.RunLoop` | 已移除，直接对 `Policy` 做 switch |
-| 没有循环时 `runNow()` 也会执行 | 需要活动中的 `run()`，否则返回 `.notRunning(requestID:)` |
-| `loopID`、`executionID` 为 `UUID` | 改为 `UInt`，与 `requestID` 共用同一个执行器内的计数器 |
-| `loopStarted`、`loopStopped(reason:)`、`loopExited`、`LoopStopReason` | `runStarted(runID:)` 与 `runEnded(runID:)` |
-| `waitStarted(loopID:interval:)`、`waitCancelled(loopID:)`、`intervalElapsed(loopID:)` | 同名事件去掉 `loopID`；run 之间不重叠 |
-| `Event.Kind.waitFailed` | 已移除，等待只会以 `waitCancelled` 或 `intervalElapsed` 结束 |
-| `ExecutionSource.scheduledLoop(loopID:)` | `.scheduled` |
-| `events()` 与 `events(bufferingPolicy: EventBufferingPolicy)` | 合并为 `events(bufferingPolicy:)`，参数类型是 `AsyncStream<Event>.Continuation.BufferingPolicy`，默认 `.unbounded`；`EventBufferingPolicy` 已移除，`events()` 仍可编译 |
-| 公开的 `Event.init`、`ExecutionContext.init` | 改为内部，使用者从事件和 `RunNowResult` 读取这些值 |
-| 取消请求之后抛出的错误记为 `failed` | 记为 `cancelled`，由取消请求决定结果 |
-| `executionStarted` 在执行任务内部发出 | 改为在选中执行时同步发出，见“事件观察”中的顺序保证 |
+注意最低 Swift 版本已提高到 6.1。
 
 ## 许可证
 `swift-sequential-executor` 基于 MIT License 发布。详情请查看 [LICENSE](LICENSE)。
