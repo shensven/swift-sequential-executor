@@ -55,7 +55,7 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
-      - name: Build
+      - name: Build (debug)
         run: swift build
 
       - name: Build (release)

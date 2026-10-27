@@ -43,7 +43,7 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
-      - name: Build
+      - name: Build (debug)
         run: swift build
 
       - name: Build (release)
@@ -53,7 +53,7 @@ jobs:
         run: swift test
 
   example:
-    name: Swift 6 Example App / macOS 26
+    name: Example App / macos-26
     runs-on: macos-26
 
     steps:
@@ -74,7 +74,7 @@ jobs:
           build
 
   documentation:
-    name: DocC / macOS 26
+    name: DocC / macos-26
     runs-on: macos-26
 
     steps:
@@ -89,7 +89,7 @@ jobs:
           OTHER_DOCC_FLAGS='--warnings-as-errors'
 
   platforms:
-    name: ${{ matrix.name }} / macOS 26
+    name: ${{ matrix.name }} / macos-26
     runs-on: macos-26
 
     strategy:
