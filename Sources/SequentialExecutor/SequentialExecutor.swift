@@ -72,8 +72,6 @@ public actor SequentialExecutor {
             case waitStarted(loopID: UInt, interval: Duration)
             /// Reports that the current loop wait was cancelled.
             case waitCancelled(loopID: UInt)
-            /// Reports that the current loop wait failed with an error.
-            case waitFailed(loopID: UInt, error: any Error & Sendable)
             /// Reports that the configured interval elapsed.
             case intervalElapsed(loopID: UInt)
         }
@@ -385,10 +383,10 @@ private extension SequentialExecutor {
                     try await clock.sleep(for: interval)
                     try Task.checkCancellation()
                     waitOutcome = .elapsed
-                } catch is CancellationError {
-                    waitOutcome = .cancelled
                 } catch {
-                    waitOutcome = .failed(error)
+                    // ContinuousClock.sleep is documented to throw only CancellationError,
+                    // so any error here means the wait was cancelled.
+                    waitOutcome = .cancelled
                 }
 
                 guard await self?.completeScheduledWait(loopID: loopID, outcome: waitOutcome) == true else { break }
@@ -405,7 +403,6 @@ private extension SequentialExecutor {
     enum ScheduledWaitOutcome: Sendable {
         case elapsed
         case cancelled
-        case failed(any Error & Sendable)
     }
 
     func beginScheduledWait(loopID: UInt) -> Duration? {
@@ -418,9 +415,6 @@ private extension SequentialExecutor {
         switch outcome {
         case .cancelled:
             emit(.waitCancelled(loopID: loopID))
-            return false
-        case let .failed(error):
-            emit(.waitFailed(loopID: loopID, error: error))
             return false
         case .elapsed:
             guard activeLoop?.id == loopID else {

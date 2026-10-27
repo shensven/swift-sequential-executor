@@ -425,7 +425,7 @@ final class ViewModel {
             waitLoopID = loopID
             waitCountdown.start(milliseconds: interval.millisecondsValue)
 
-        case let .waitCancelled(loopID), let .waitFailed(loopID, _), let .intervalElapsed(loopID):
+        case let .waitCancelled(loopID), let .intervalElapsed(loopID):
             if waitLoopID == loopID {
                 waitLoopID = nil
                 waitCountdown.reset()
@@ -576,7 +576,6 @@ private extension SequentialExecutor.Event.Kind {
         case .loopExited: "loopExited"
         case .waitStarted: "waitStarted"
         case .waitCancelled: "waitCancelled"
-        case .waitFailed: "waitFailed"
         case .intervalElapsed: "intervalElapsed"
         }
     }
@@ -603,8 +602,6 @@ private extension SequentialExecutor.Event.Kind {
         case let .waitCancelled(loopID),
              let .intervalElapsed(loopID):
             "loopID: \(loopID)"
-        case let .waitFailed(loopID, error):
-            "loopID: \(loopID) • \(String(describing: error))"
         }
     }
 }
