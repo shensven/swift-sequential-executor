@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Setup Swift
-        uses: SwiftyLab/setup-swift@latest
+        uses: SwiftyLab/setup-swift@v1.14.2
         with:
           swift-version: ${{ matrix.swift }}
 
