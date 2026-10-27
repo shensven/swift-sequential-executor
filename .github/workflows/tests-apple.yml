@@ -72,3 +72,18 @@ jobs:
           -destination 'generic/platform=macOS'
           CODE_SIGNING_ALLOWED=NO
           build
+
+  documentation:
+    name: DocC / macOS 26
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build documentation
+        run: >-
+          xcodebuild docbuild
+          -scheme SequentialExecutor
+          -destination 'generic/platform=macOS'
+          OTHER_DOCC_FLAGS='--warnings-as-errors'
