@@ -81,13 +81,11 @@ public actor SequentialExecutor {
         /// The lifecycle payload emitted at `emittedAt`.
         public let kind: Kind
 
-        /// Creates a lifecycle event.
+        /// Creates a lifecycle event stamped with the current time.
         ///
-        /// - Parameters:
-        ///   - emittedAt: The event's emission time.
-        ///   - kind: The lifecycle transition represented by the event.
-        public init(emittedAt: Date = .now, kind: Kind) {
-            self.emittedAt = emittedAt
+        /// Only the executor creates events, so this initializer stays internal.
+        init(kind: Kind) {
+            emittedAt = .now
             self.kind = kind
         }
     }
@@ -119,10 +117,8 @@ public actor SequentialExecutor {
 
         /// Creates an execution context.
         ///
-        /// - Parameters:
-        ///   - executionID: The identifier for this execution.
-        ///   - source: The trigger that started this execution.
-        public init(executionID: UInt, source: ExecutionSource) {
+        /// Only the executor creates contexts, so this initializer stays internal.
+        init(executionID: UInt, source: ExecutionSource) {
             self.executionID = executionID
             self.source = source
         }
@@ -560,8 +556,8 @@ private extension SequentialExecutor {
         eventContinuations.removeValue(forKey: subscriberID)
     }
 
-    func emit(_ kind: Event.Kind, emittedAt: Date = .now) {
-        let event = Event(emittedAt: emittedAt, kind: kind)
+    func emit(_ kind: Event.Kind) {
+        let event = Event(kind: kind)
         eventHandler?(event)
         for continuation in eventContinuations.values {
             continuation.yield(event)
