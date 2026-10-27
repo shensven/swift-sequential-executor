@@ -38,6 +38,10 @@ public actor SequentialExecutor {
         /// Identifies a lifecycle transition.
         public enum Kind: Sendable {
             /// Reports that a caller requested an immediate execution.
+            ///
+            /// No scheduled execution starts until this request has settled. The next
+            /// `executionStarted` event belongs either to this request or to a newer
+            /// request that superseded it.
             case requested(requestID: UInt)
             /// Reports that a single execution started.
             ///

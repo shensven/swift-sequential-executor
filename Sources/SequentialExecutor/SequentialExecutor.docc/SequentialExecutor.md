@@ -97,3 +97,14 @@ which may drop events without a separate notification.
 Correlate loop lifecycle events by `loopID`. Events belonging to one loop are
 ordered, but events from different loops may interleave—for example, an old loop
 may exit after its replacement starts.
+
+### Event Ordering
+
+For one `executionID`, ``SequentialExecutor/Event/Kind/executionStarted(executionID:source:)``
+is always emitted before that execution's finished, cancelled, or failed event.
+After ``SequentialExecutor/Event/Kind/requested(requestID:)``, no scheduled execution
+starts until that request has settled; the next `executionStarted` belongs either to
+that request or to a newer ``SequentialExecutor/runNow()`` request that superseded it.
+
+Request, loop, and execution identifiers come from one increasing counter per
+executor, so no two of them share a number and a larger identifier was issued later.

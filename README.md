@@ -15,8 +15,8 @@ Run async tasks one at a time, on schedule or on demand.
 
 - [x] Runs async tasks with a fixed delay between executions
 - [x] Supports immediate execution that takes precedence over scheduling
-- [x] Uses a state machine to coordinate interval waiting, async task execution, and immediate trigger requests across different runtime states
-- [x] Provides a state-machine event callback interface for logging, monitoring, or UI integration
+- [x] Coordinates interval waiting, async task execution, and immediate trigger requests so that executions never overlap
+- [x] Reports lifecycle events through a synchronous handler or an `AsyncStream` for logging, monitoring, or UI integration
 - [x] Full [API Documentation](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
 
 > [!TIP]
@@ -38,11 +38,11 @@ Run async tasks one at a time, on schedule or on demand.
 
 Once your Swift package or Xcode project is set up, add `swift-sequential-executor` to `dependencies` in `Package.swift`, or add it to the package dependency list in Xcode.
 
-Add version `1.1.2` or later:
+Add version `2.0.0` or later:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/shensven/swift-sequential-executor.git", from: "1.1.2")
+    .package(url: "https://github.com/shensven/swift-sequential-executor.git", from: "2.0.0")
 ]
 ```
 
@@ -168,6 +168,16 @@ buffers may drop events without a separate notification. Correlate loop lifecycl
 events by `loopID`: events for one loop remain ordered, while events from an exiting
 loop and its replacement may interleave.
 
+Ordering guarantees:
+
+- For one `executionID`, `executionStarted` is always emitted before that execution's
+  `executionFinished`, `executionCancelled`, or `executionFailed` event.
+- After `requested(requestID:)`, no scheduled execution starts until that request has
+  settled. The next `executionStarted` belongs either to that request or to a newer
+  `runNow()` request that superseded it.
+- Request, loop, and execution identifiers come from one increasing counter per
+  executor, so no two of them share a number and a larger identifier was issued later.
+
 ## Behavior
 
 `SequentialExecutor` provides these guarantees:
@@ -192,7 +202,10 @@ wait interval → execute → wait interval → execute
 <details>
 <summary>Coordination Model</summary>
 
-The executor has 5 main states, and the diagram below shows how they flow:
+The executor's behavior reads as 5 states. The implementation does not store a state
+value; it tracks the active loop, the active execution, and the number of pending
+immediate requests, and the rules below follow from those. The diagram shows how the
+states flow:
 
 - `Idle`: no task is running and no immediate request is pending
 - `Waiting`: waiting for the next scheduled trigger
@@ -282,6 +295,22 @@ The repository includes a SwiftUI example app at [`Examples/SequentialExecutorEx
 You can use it to debug and observe the runtime behavior of `SequentialExecutor`, including scheduling loop changes, immediate execution, cancellation coordination, and the emission order of lifecycle events. The example keeps visible state event-driven, which makes it easier to inspect waiting and execution timeline changes directly.
 
 ![SequentialExecutor example app](Examples/SequentialExecutorExample.png)
+
+## Migrating from 1.x
+
+Version 2.0 is a breaking release. The behavior of scheduling and `runNow()` is
+unchanged; the changes below are to the API surface and to event ordering.
+
+| 1.x | 2.0 |
+| --- | --- |
+| `Policy()` or `.init()` | `.disabled` |
+| `.init(runLoop: .interval(d))` | `.interval(d)` |
+| `Policy.runLoop`, `Policy.RunLoop` | Removed. Switch over `Policy` directly. |
+| `loopID` and `executionID` are `UUID` | `UInt`, issued from the same per-executor counter as `requestID` |
+| `events()` and `events(bufferingPolicy: EventBufferingPolicy)` | `events(bufferingPolicy:)` taking `AsyncStream<Event>.Continuation.BufferingPolicy`, default `.unbounded`. `EventBufferingPolicy` is removed; `events()` still compiles. |
+| `Event.Kind.waitFailed` | Removed. A wait ends with `waitCancelled` or `intervalElapsed`. |
+| Public `Event.init` and `ExecutionContext.init` | Internal. Read these values from events and `RunNowResult`. |
+| `executionStarted` emitted inside the execution task | Emitted synchronously when the execution is selected. See the ordering guarantees under Event Observation. |
 
 ## License
 `swift-sequential-executor` is released under the MIT License. See [LICENSE](LICENSE) for details.

@@ -15,8 +15,8 @@
 
 - [x] 按固定延迟依次运行异步任务
 - [x] 支持优先于定时调度的立即执行
-- [x] 通过一个状态机，处理间隔等待、异步任务执行、立即触发请求等不同状态之间的协调
-- [x] 提供状态机的事件回调接口，方便接入日志、监控或 UI
+- [x] 协调间隔等待、异步任务执行与立即触发请求，保证执行永不重叠
+- [x] 通过同步回调或 `AsyncStream` 提供生命周期事件，方便接入日志、监控或 UI
 - [x] 完整的 [API 文档](https://swiftpackageindex.com/shensven/swift-sequential-executor/main/documentation/sequentialexecutor/)
 
 > [!TIP]
@@ -38,11 +38,11 @@
 
 只要你的 Swift 包或 Xcode 工程已经建立好，就可以把 `swift-sequential-executor` 添加到 `Package.swift` 的 `dependencies`，或者加到 Xcode 的包依赖列表里。
 
-添加 `1.1.2` 或更高版本：
+添加 `2.0.0` 或更高版本：
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/shensven/swift-sequential-executor.git", from: "1.1.2")
+    .package(url: "https://github.com/shensven/swift-sequential-executor.git", from: "2.0.0")
 ]
 ```
 
@@ -160,6 +160,15 @@ case let .superseded(requestID, byRequestID):
 事件，并且不会额外发出丢弃通知。处理循环生命周期时应使用 `loopID` 关联事件：
 同一个循环内的事件保持有序，但正在退出的旧循环与替代它的新循环之间可能交错。
 
+顺序保证：
+
+- 对同一个 `executionID`，`executionStarted` 一定先于该次执行的 `executionFinished`、
+  `executionCancelled` 或 `executionFailed` 发出。
+- `requested(requestID:)` 之后，在该请求有结果之前不会开始任何定时执行；下一个
+  `executionStarted` 要么属于该请求，要么属于取代了它的更新的 `runNow()` 请求。
+- 请求、循环、执行的标识来自同一个执行器内递增的计数器，三者不会共用一个数字，
+  数字更大的标识一定更晚发出。
+
 ## 行为概览
 
 `SequentialExecutor` 提供以下保证：
@@ -184,7 +193,8 @@ case let .superseded(requestID, byRequestID):
 <details>
 <summary>协调模型</summary>
 
-执行器有 5 个主要状态，下面这张图展示了它们之间的流转：
+执行器的行为可以读作 5 个状态。实现里并没有存一个状态值，而是跟踪当前循环、当前执行
+和待处理的立即请求数，下面的规则由此推出。这张图展示了状态之间的流转：
 
 - `Idle`：没有运行中的任务，也没有待处理的立即触发请求
 - `Waiting`：正在等待下一次定时触发
@@ -274,6 +284,21 @@ sequenceDiagram
 你可以用它调试和观察 `SequentialExecutor` 的运行时行为，包括调度循环变化、立即执行、取消协调，以及生命周期事件的发出顺序。这个示例会把可见状态保持为事件驱动，方便直接检查等待与执行的时间线变化。
 
 ![SequentialExecutor 示例应用](Examples/SequentialExecutorExample.png)
+
+## 从 1.x 迁移
+
+2.0 是破坏性版本。调度与 `runNow()` 的行为不变，变化集中在 API 表面和事件顺序：
+
+| 1.x | 2.0 |
+| --- | --- |
+| `Policy()` 或 `.init()` | `.disabled` |
+| `.init(runLoop: .interval(d))` | `.interval(d)` |
+| `Policy.runLoop`、`Policy.RunLoop` | 已移除，直接对 `Policy` 做 switch |
+| `loopID`、`executionID` 为 `UUID` | 改为 `UInt`，与 `requestID` 共用同一个执行器内的计数器 |
+| `events()` 与 `events(bufferingPolicy: EventBufferingPolicy)` | 合并为 `events(bufferingPolicy:)`，参数类型是 `AsyncStream<Event>.Continuation.BufferingPolicy`，默认 `.unbounded`；`EventBufferingPolicy` 已移除，`events()` 仍可编译 |
+| `Event.Kind.waitFailed` | 已移除，等待只会以 `waitCancelled` 或 `intervalElapsed` 结束 |
+| 公开的 `Event.init`、`ExecutionContext.init` | 改为内部，使用者从事件和 `RunNowResult` 读取这些值 |
+| `executionStarted` 在执行任务内部发出 | 改为在选中执行时同步发出，见“事件观察”中的顺序保证 |
 
 ## 许可证
 
