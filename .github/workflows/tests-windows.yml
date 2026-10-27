@@ -54,5 +54,8 @@ jobs:
       - name: Build
         run: swift build
 
+      - name: Build (release)
+        run: swift build -c release
+
       - name: Test
         run: swift test
