@@ -199,7 +199,7 @@ case let .superseded(requestID, byRequestID):
 - `Idle`：没有运行中的任务，也没有待处理的立即触发请求
 - `Waiting`：正在等待下一次定时触发
 - `ScheduledExecution`：定时触发的任务正在运行
-- `ImmediateRequestPending`：立即触发请求已经到来，正在等待切换
+- `ImmediateRequestPending`：有任务正在运行时收到了立即触发请求，正在等待该任务退出
 - `ImmediateExecution`：立即触发的任务正在运行
 
 ```mermaid
@@ -214,7 +214,7 @@ flowchart TD
     Idle -->|立即触发| ImmediateExecution
 
     Waiting -->|定时到期| ScheduledExecution
-    Waiting -->|收到立即触发请求| ImmediateRequestPending
+    Waiting -->|立即触发| ImmediateExecution
     Waiting -->|关闭定时| Idle
 
     ScheduledExecution -->|任务结束，定时仍启用| Waiting
@@ -229,6 +229,7 @@ flowchart TD
 ```
 
 - 在 `Waiting` 中更新定时间隔后，抽象状态仍然是 `Waiting`，但旧等待会被取消并重新开始
+- 在 `Idle` 或 `Waiting` 中收到立即触发请求时没有需要等待的任务，会在同一步直接开始执行，不经过 `ImmediateRequestPending`
 - 在 `ImmediateRequestPending` 中如果又收到新的立即触发请求，状态不变，但较早的待处理请求会让位给最新请求
 
 </details>

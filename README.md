@@ -210,7 +210,7 @@ states flow:
 - `Idle`: no task is running and no immediate request is pending
 - `Waiting`: waiting for the next scheduled trigger
 - `ScheduledExecution`: a scheduled task is running
-- `ImmediateRequestPending`: an immediate request has arrived and handoff is in progress
+- `ImmediateRequestPending`: an immediate request has arrived while an execution is running, and the handoff is waiting for that execution to exit
 - `ImmediateExecution`: an immediately triggered task is running
 
 ```mermaid
@@ -225,7 +225,7 @@ flowchart TD
     Idle -->|Trigger immediately| ImmediateExecution
 
     Waiting -->|Interval elapsed| ScheduledExecution
-    Waiting -->|Immediate request arrives| ImmediateRequestPending
+    Waiting -->|Trigger immediately| ImmediateExecution
     Waiting -->|Disable scheduling| Idle
 
     ScheduledExecution -->|Task finishes, scheduling still enabled| Waiting
@@ -240,6 +240,7 @@ flowchart TD
 ```
 
 - If the interval is updated while in `Waiting`, the executor remains in the abstract `Waiting` state, but cancels the old wait and starts a new one
+- An immediate request from `Idle` or `Waiting` has nothing to wait for, so it starts in the same step without passing through `ImmediateRequestPending`
 - If a newer immediate request arrives while in `ImmediateRequestPending`, the state does not change, but the older pending request yields to the newest one
 
 </details>
